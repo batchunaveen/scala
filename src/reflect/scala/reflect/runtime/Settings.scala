@@ -49,6 +49,7 @@ private[reflect] class Settings extends MutableSettings {
   val verbose           = new BooleanSetting(false)
 
   val Yrecursion        = new IntSetting(0)
+  val YnoStubWarning    = new BooleanSetting(false)
   val maxClassfileName  = new IntSetting(255)
   def isScala211        = true
 }

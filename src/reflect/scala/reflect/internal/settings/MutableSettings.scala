@@ -55,6 +55,7 @@ abstract class MutableSettings extends AbsSettings {
   def verbose: BooleanSetting
 
   def Yrecursion: IntSetting
+  def YnoStubWarning: BooleanSetting
   def maxClassfileName: IntSetting
 
   def isScala211: Boolean
