@@ -496,8 +496,21 @@ object Predef extends LowPriorityImplicits with DeprecatedPredef {
    * @group type-constraints
    */
   @implicitNotFound(msg = "Cannot prove that ${From} <:< ${To}.")
-  sealed abstract class <:<[-From, +To] extends (From => To) with Serializable
-  private[this] final val singleton_<:< = new <:<[Any,Any] { def apply(x: Any): Any = x }
+  sealed abstract class <:<[-From, +To] extends (From => To) with Serializable {
+    def substitute[F[-_]](ft: F[To]): F[From]
+    def covariant[F[+_]]: <:<[F[From], F[To]] = {
+      type G[-T] = F[T] <:< F[To]
+      substitute[G](implicitly[F[To] <:< F[To]])
+    }
+    def contravariant[F[-_]]: <:<[F[To], F[From]] = {
+      type G[-T] = F[To] <:< F[T]
+      substitute[G](implicitly[F[To] <:< F[To]])
+    }
+  }
+  private[this] final val singleton_<:< = new <:<[Any,Any] {
+    def apply(x: Any): Any = x
+    def substitute[F[-_]](ft: F[Any]): F[Any] = ft
+  }
   // The dollar prefix is to dodge accidental shadowing of this method
   // by a user-defined method of the same name (SI-7788).
   // The collections rely on this method.
@@ -513,8 +526,21 @@ object Predef extends LowPriorityImplicits with DeprecatedPredef {
    * @group type-constraints
    */
   @implicitNotFound(msg = "Cannot prove that ${From} =:= ${To}.")
-  sealed abstract class =:=[From, To] extends (From => To) with Serializable
-  private[this] final val singleton_=:= = new =:=[Any,Any] { def apply(x: Any): Any = x }
+  sealed abstract class =:=[From, To] extends (From => To) with Serializable {
+    def substitute[F[_]](ff: F[From]): F[To]
+    def lift[F[_]]: =:=[F[From], F[To]] = {
+      type G[T] = F[From] =:= F[T]
+      substitute[G](implicitly[F[From] =:= F[From]])
+    }
+    def flip: =:=[To, From] = {
+      type G[T] = T =:= From
+      substitute[G](implicitly[From =:= From])
+    }
+  }
+  private[this] final val singleton_=:= = new =:=[Any,Any] {
+    def apply(x: Any): Any = x
+    def substitute[F[_]](ff: F[Any]): F[Any] = ff
+  }
   /** @group type-constraints */
   object =:= {
      implicit def tpEquals[A]: A =:= A = singleton_=:=.asInstanceOf[A =:= A]
