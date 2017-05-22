@@ -194,7 +194,7 @@ object RedBlackTree {
     }
     def subl(t: Tree[A, B]) =
       if (t.isInstanceOf[BlackTree[_, _]]) t.red
-      else sys.error("Defect: invariance violation; expected black, got "+t)
+      else throw new IllegalStateException("Defect: invariance violation; expected black, got "+t)
 
     def balLeft(x: A, xv: B, tl: Tree[A, B], tr: Tree[A, B]) = if (isRedTree(tl)) {
       RedTree(x, xv, tl.black, tr)
@@ -203,7 +203,7 @@ object RedBlackTree {
     } else if (isRedTree(tr) && isBlackTree(tr.left)) {
       RedTree(tr.left.key, tr.left.value, BlackTree(x, xv, tl, tr.left.left), balance(tr.key, tr.value, tr.left.right, subl(tr.right)))
     } else {
-      sys.error("Defect: invariance violation")
+      throw new IllegalStateException("Defect: invariance violation")
     }
     def balRight(x: A, xv: B, tl: Tree[A, B], tr: Tree[A, B]) = if (isRedTree(tr)) {
       RedTree(x, xv, tl, tr.black)
@@ -212,7 +212,7 @@ object RedBlackTree {
     } else if (isRedTree(tl) && isBlackTree(tl.right)) {
       RedTree(tl.right.key, tl.right.value, balance(tl.key, tl.value, subl(tl.left), tl.right.left), BlackTree(x, xv, tl.right.right, tr))
     } else {
-      sys.error("Defect: invariance violation")
+      throw new IllegalStateException("Defect: invariance violation")
     }
     def delLeft = if (isBlackTree(tree.left)) balLeft(tree.key, tree.value, del(tree.left, k), tree.right) else RedTree(tree.key, tree.value, del(tree.left, k), tree.right)
     def delRight = if (isBlackTree(tree.right)) balRight(tree.key, tree.value, tree.left, del(tree.right, k)) else RedTree(tree.key, tree.value, tree.left, del(tree.right, k))
@@ -239,7 +239,7 @@ object RedBlackTree {
     } else if (isRedTree(tl)) {
       RedTree(tl.key, tl.value, tl.left, append(tl.right, tr))
     } else {
-      sys.error("unmatched tree on append: " + tl + ", " + tr)
+      throw new IllegalStateException("unmatched tree on append: " + tl + ", " + tr)
     }
 
     val cmp = ordering.compare(k, tree.key)
@@ -359,7 +359,7 @@ object RedBlackTree {
         val leftMost = false
         (unzip(cons(left, leftZipper), leftMost), false, leftMost, smallerDepth)
       } else {
-        sys.error("unmatched trees in unzip: " + left + ", " + right)
+        throw new IllegalStateException("unmatched trees in unzip: " + left + ", " + right)
       }
     }
     unzipBoth(left, right, null, null, 0)
@@ -370,7 +370,7 @@ object RedBlackTree {
     @tailrec
     def  findDepth(zipper: NList[Tree[A, B]], depth: Int): NList[Tree[A, B]] =
       if (zipper eq null) {
-        sys.error("Defect: unexpected empty zipper while computing range")
+        throw new IllegalStateException("Defect: unexpected empty zipper while computing range")
       } else if (isBlackTree(zipper.head)) {
         if (depth == 1) zipper else findDepth(zipper.tail, depth - 1)
       } else {
@@ -486,23 +486,8 @@ object RedBlackTree {
       else findLeftMostOrPopOnEmpty(goLeft(tree))
 
     private[this] def pushNext(tree: Tree[A, B]) {
-      try {
-        stackOfNexts(index) = tree
-        index += 1
-      } catch {
-        case _: ArrayIndexOutOfBoundsException =>
-          /*
-           * Either the tree became unbalanced or we calculated the maximum height incorrectly.
-           * To avoid crashing the iterator we expand the path array. Obviously this should never
-           * happen...
-           *
-           * An exception handler is used instead of an if-condition to optimize the normal path.
-           * This makes a large difference in iteration speed!
-           */
-          assert(index >= stackOfNexts.length)
-          stackOfNexts :+= null
-          pushNext(tree)
-      }
+      stackOfNexts(index) = tree
+      index += 1
     }
     private[this] def popNext(): Tree[A, B] = if (index == 0) null else {
       index -= 1
@@ -516,9 +501,10 @@ object RedBlackTree {
        *
        * According to {@see Integer#numberOfLeadingZeros} ceil(log_2(n)) = (32 - Integer.numberOfLeadingZeros(n - 1))
        *
-       * We also don't store the deepest nodes in the path so the maximum path length is further reduced by one.
+       * Although we don't store the deepest nodes in the path during iteration,
+       * we potentially do so in `startFrom`.
        */
-      val maximumHeight = 2 * (32 - Integer.numberOfLeadingZeros(root.count + 2 - 1)) - 2 - 1
+      val maximumHeight = 2 * (32 - Integer.numberOfLeadingZeros(root.count + 2 - 1)) - 2
       new Array[Tree[A, B]](maximumHeight)
     }
     private[this] var index = 0

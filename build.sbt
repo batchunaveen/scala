@@ -3,7 +3,7 @@
  *
  * What you see below is very much work-in-progress. The following features are implemented:
  *   - Compiling all classses for the compiler and library ("compile" in the respective subprojects)
- *   - Running JUnit tests ("test") and partest ("test/it:test")
+ *   - Running JUnit ("junit/test"), ScalaCheck ("scalacheck/test"), and partest ("test/it:test") tests
  *   - Creating build/quick with all compiled classes and launcher scripts ("dist/mkQuick")
  *   - Creating build/pack with all JARs and launcher scripts ("dist/mkPack")
  *   - Building all scaladoc sets ("doc")
@@ -32,22 +32,21 @@
  *   - to modularize the Scala compiler or library further
  */
 
+import scala.build._
 import VersionUtil._
 
 // Scala dependencies:
-val scalaSwingDep                = scalaDep("org.scala-lang.modules", "scala-swing")
 val scalaXmlDep                  = scalaDep("org.scala-lang.modules", "scala-xml")
-val scalaParserCombinatorsDep    = scalaDep("org.scala-lang.modules", "scala-parser-combinators")
-val partestDep                   = scalaDep("org.scala-lang.modules", "scala-partest",              versionProp = "partest")
-val scalacheckDep                = scalaDep("org.scalacheck",         "scalacheck",                 scope = "it")
+val partestDep                   = scalaDep("org.scala-lang.modules", "scala-partest", versionProp = "partest")
 
 // Non-Scala dependencies:
-val junitDep          = "junit"                  % "junit"           % "4.11"
-val junitInterfaceDep = "com.novocode"           % "junit-interface" % "0.11"                            % "test"
-val jolDep            = "org.openjdk.jol"        % "jol-core"        % "0.5"
-val asmDep            = "org.scala-lang.modules" % "scala-asm"       % versionProps("scala-asm.version")
-val jlineDep          = "jline"                  % "jline"           % versionProps("jline.version")
-val antDep            = "org.apache.ant"         % "ant"             % "1.9.4"
+val junitDep          = "junit"                  % "junit"                % "4.11"
+val junitInterfaceDep = "com.novocode"           % "junit-interface"      % "0.11"                            % "test"
+val scalacheckDep     = "org.scalacheck"         % "scalacheck_2.13.0-M1" % "1.13.5"                          % "test"
+val jolDep            = "org.openjdk.jol"        % "jol-core"             % "0.5"
+val asmDep            = "org.scala-lang.modules" % "scala-asm"            % versionProps("scala-asm.version")
+val jlineDep          = "jline"                  % "jline"                % versionProps("jline.version")
+val antDep            = "org.apache.ant"         % "ant"                  % "1.9.4"
 
 /** Publish to ./dists/maven-sbt, similar to the Ant build which publishes to ./dists/maven. This
   * can be used to compare the output of the sbt and Ant builds during the transition period. Any
@@ -87,9 +86,11 @@ lazy val publishSettings : Seq[Setting[_]] = Seq(
 // should not be set directly. It is the same as the Maven version and derived automatically from `baseVersion` and
 // `baseVersionSuffix`.
 globalVersionSettings
-baseVersion in Global := "2.12.2"
+baseVersion in Global := "2.13.0"
 baseVersionSuffix in Global := "SNAPSHOT"
-mimaReferenceVersion in Global := Some("2.12.0")
+
+// to be locked down sometime around the time of 2.13.0-RC1
+mimaReferenceVersion in Global := None
 
 scalaVersion in Global := versionProps("starr.version")
 
@@ -165,8 +166,8 @@ lazy val commonSettings = clearSourceAndResourceDirectories ++ publishSettings +
         <url>https://github.com/scala/scala.git</url>
       </scm>
         <issueManagement>
-          <system>JIRA</system>
-          <url>https://issues.scala-lang.org/</url>
+          <system>GitHub</system>
+          <url>https://github.com/scala/bug/issues</url>
         </issueManagement>
         <developers>
           <developer>
@@ -524,7 +525,7 @@ lazy val scaladoc = configureAsSubproject(project)
   .settings(
     name := "scala-compiler-doc",
     description := "Scala Documentation Generator",
-    libraryDependencies ++= Seq(scalaXmlDep, partestDep),
+    libraryDependencies ++= Seq(scalaXmlDep),
     includeFilter in unmanagedResources in Compile := "*.html" | "*.css" | "*.gif" | "*.png" | "*.js" | "*.txt" | "*.svg" | "*.eot" | "*.woff" | "*.ttf"
   )
   .dependsOn(compiler)
@@ -543,7 +544,7 @@ lazy val scalap = configureAsSubproject(project)
   .dependsOn(compiler)
 
 lazy val partestExtras = Project("partest-extras", file(".") / "src" / "partest-extras")
-  .dependsOn(replJlineEmbedded)
+  .dependsOn(replJlineEmbedded, scaladoc)
   .settings(commonSettings)
   .settings(generatePropertiesFileSettings)
   .settings(clearSourceAndResourceDirectories)
@@ -567,7 +568,20 @@ lazy val junit = project.in(file("test") / "junit")
     javaOptions in Test += "-Xss1M",
     libraryDependencies ++= Seq(junitDep, junitInterfaceDep, jolDep),
     testOptions += Tests.Argument(TestFrameworks.JUnit, "-a", "-v"),
-    // testFrameworks -= new TestFramework("org.scalacheck.ScalaCheckFramework"),
+    unmanagedSourceDirectories in Compile := Nil,
+    unmanagedSourceDirectories in Test := List(baseDirectory.value)
+  )
+
+lazy val scalacheck = project.in(file("test") / "scalacheck")
+  .dependsOn(library, reflect, compiler, scaladoc)
+  .settings(clearSourceAndResourceDirectories)
+  .settings(commonSettings)
+  .settings(disableDocs)
+  .settings(disablePublishing)
+  .settings(
+    fork in Test := true,
+    javaOptions in Test += "-Xss1M",
+    libraryDependencies ++= Seq(scalacheckDep),
     unmanagedSourceDirectories in Compile := Nil,
     unmanagedSourceDirectories in Test := List(baseDirectory.value)
   )
@@ -647,14 +661,14 @@ lazy val test = project
   .settings(disablePublishing)
   .settings(Defaults.itSettings)
   .settings(
-    libraryDependencies ++= Seq(asmDep, partestDep, scalaXmlDep, scalacheckDep),
+    libraryDependencies ++= Seq(asmDep, partestDep, scalaXmlDep),
     libraryDependencies ++= {
       // Resolve the JARs for all test/files/lib/*.jar.desired.sha1 files through Ivy
       val baseDir = (baseDirectory in ThisBuild).value
       (baseDir / "test/files/lib").list.toSeq.filter(_.endsWith(".jar.desired.sha1"))
         .map(f => bootstrapDep(baseDir, "test/files/lib", f.dropRight(17)))
     },
-    // Two hardcoded depenencies in partest, resolved in the otherwise unused scope "test":
+    // Two hardcoded dependencies in partest, resolved in the otherwise unused scope "test":
     libraryDependencies += bootstrapDep((baseDirectory in ThisBuild).value, "test/files/codelib", "code") % "test",
     libraryDependencies += bootstrapDep((baseDirectory in ThisBuild).value, "test/files/speclib", "instrumented") % "test",
     // no main sources
@@ -664,7 +678,6 @@ lazy val test = project
     fork in IntegrationTest := true,
     javaOptions in IntegrationTest += "-Xmx2G",
     testFrameworks += new TestFramework("scala.tools.partest.sbt.Framework"),
-    // testFrameworks -= new TestFramework("org.scalacheck.ScalaCheckFramework"),
     testOptions in IntegrationTest += Tests.Argument("-Dpartest.java_opts=-Xmx1024M -Xms64M"),
     testOptions in IntegrationTest += Tests.Argument("-Dpartest.scalac_opts=" + (scalacOptions in Compile).value.mkString(" ")),
     testOptions in IntegrationTest += Tests.Setup { () =>
@@ -702,22 +715,6 @@ lazy val manual = configureAsSubproject(project)
     libraryDependencies ++= Seq(scalaXmlDep, antDep, "org.scala-lang" % "scala-library" % scalaVersion.value),
     classDirectory in Compile := (target in Compile).value / "classes"
   )
-
-lazy val libraryAll = Project("library-all", file(".") / "target" / "library-all-src-dummy")
-  .settings(commonSettings)
-  .settings(disableDocs)
-  .settings(
-    name := "scala-library-all",
-    publishArtifact in (Compile, packageBin) := false,
-    publishArtifact in (Compile, packageSrc) := false,
-    libraryDependencies ++= Seq(scalaXmlDep, scalaParserCombinatorsDep, scalaSwingDep),
-    apiURL := None,
-    fixPom(
-      "/project/name" -> <name>Scala Library Powerpack</name>,
-      "/project/description" -> <description>The Scala Standard Library and Official Modules</description>
-    )
-  )
-  .dependsOn(library, reflect)
 
 lazy val scalaDist = Project("scala-dist", file(".") / "target" / "scala-dist-dist-src-dummy")
   .settings(commonSettings)
@@ -763,7 +760,7 @@ lazy val scalaDist = Project("scala-dist", file(".") / "target" / "scala-dist-di
     ),
     publishArtifact in (Compile, packageSrc) := false
   )
-  .dependsOn(libraryAll, compiler, scalap)
+  .dependsOn(library, reflect, compiler, scalap)
 
 lazy val root: Project = (project in file("."))
   .settings(disableDocs)
@@ -796,9 +793,10 @@ lazy val root: Project = (project in file("."))
     testAll := {
       val results = ScriptCommands.sequence[Result[Unit]](List(
         (Keys.test in Test in junit).result,
+        (Keys.test in Test in scalacheck).result,
         (testOnly in IntegrationTest in testP).toTask(" -- run").result,
         (testOnly in IntegrationTest in testP).toTask(" -- pos neg jvm").result,
-        (testOnly in IntegrationTest in testP).toTask(" -- res scalap specialized scalacheck").result,
+        (testOnly in IntegrationTest in testP).toTask(" -- res scalap specialized").result,
         (testOnly in IntegrationTest in testP).toTask(" -- instrumented presentation").result,
         (testOnly in IntegrationTest in testP).toTask(" -- --srcpath scaladoc").result,
         (Keys.test in Test in osgiTestFelix).result,
@@ -817,7 +815,7 @@ lazy val root: Project = (project in file("."))
         "junit/test",
         "partest run",
         "partest pos neg jvm",
-        "partest res scalap specialized scalacheck",
+        "partest res scalap specialized",
         "partest instrumented presentation",
         "partest --srcpath scaladoc",
         "osgiTestFelix/test",
@@ -870,7 +868,7 @@ lazy val root: Project = (project in file("."))
     incOptions := incOptions.value.withNameHashing(!antStyle.value).withAntStyle(antStyle.value)
   )
   .aggregate(library, reflect, compiler, interactive, repl, replJline, replJlineEmbedded,
-    scaladoc, scalap, partestExtras, junit, libraryAll, scalaDist).settings(
+    scaladoc, scalap, partestExtras, junit, scalaDist).settings(
     sources in Compile := Seq.empty,
     onLoadMessage := """|*** Welcome to the sbt build definition for Scala! ***
       |Check README.md for more information.""".stripMargin
@@ -882,7 +880,7 @@ lazy val distDependencies = Seq(replJline, replJlineEmbedded, compiler, library,
 lazy val dist = (project in file("dist"))
   .settings(commonSettings)
   .settings(
-    libraryDependencies ++= Seq(scalaSwingDep, jlineDep),
+    libraryDependencies ++= Seq(jlineDep),
     mkBin := mkBinImpl.value,
     mkQuick := Def.task {
       val cp = (fullClasspath in IntegrationTest in LocalProject("test")).value
@@ -895,7 +893,7 @@ lazy val dist = (project in file("dist"))
     mkPack := Def.task { (buildDirectory in ThisBuild).value / "pack" }.dependsOn(packagedArtifact in (Compile, packageBin), mkBin).value,
     target := (baseDirectory in ThisBuild).value / "target" / thisProject.value.id,
     packageBin in Compile := {
-      val extraDeps = Set(scalaSwingDep, scalaParserCombinatorsDep, scalaXmlDep)
+      val extraDeps = Set(scalaXmlDep)
       val targetDir = (buildDirectory in ThisBuild).value / "pack" / "lib"
       def uniqueModule(m: ModuleID) = (m.organization, m.name.replaceFirst("_.*", ""))
       val extraModules = extraDeps.map(uniqueModule)
@@ -1004,6 +1002,9 @@ commands += Command("partest")(_ => PartestUtil.partestParser((baseDirectory in 
   ("test/it:testOnly -- " + parsed) :: state
 }
 
+// Watch the test files also so ~partest triggers on test case changes
+watchSources ++= PartestUtil.testFilePaths((baseDirectory in ThisBuild).value, (baseDirectory in ThisBuild).value / "test")
+
 // Add tab completion to scalac et al.
 commands ++= {
   val commands =
@@ -1023,7 +1024,7 @@ addCommandAlias("scalap",   "scalap/compile:runMain              scala.tools.sca
 
 lazy val intellij = taskKey[Unit]("Update the library classpaths in the IntelliJ project files.")
 
-def moduleDeps(p: Project) = (externalDependencyClasspath in Compile in p).map(a => (p.id, a.map(_.data)))
+def moduleDeps(p: Project, config: Configuration = Compile) = (externalDependencyClasspath in config in p).map(a => (p.id, a.map(_.data)))
 
 // aliases to projects to prevent name clashes
 def compilerP = compiler
@@ -1045,7 +1046,6 @@ intellij := {
       moduleDeps(interactive).value,
       moduleDeps(junit).value,
       moduleDeps(library).value,
-      // moduleDeps(libraryAll).value,          // No sources
       moduleDeps(manual).value,
       moduleDeps(partestExtras).value,
       moduleDeps(partestJavaAgent).value,
@@ -1055,6 +1055,7 @@ intellij := {
       // moduleDeps(replJlineEmbedded).value,   // No sources
       // moduleDeps(root).value,                // No sources
       // moduleDeps(scalaDist).value,           // No sources
+      moduleDeps(scalacheck, config = Test).value,
       moduleDeps(scaladoc).value,
       moduleDeps(scalap).value,
       moduleDeps(testP).value)

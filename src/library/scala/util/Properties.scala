@@ -105,7 +105,7 @@ private[scala] trait PropertiesTrait {
    *  or "version (unknown)" if it cannot be determined.
    */
   val versionString         = "version " + scalaPropOrElse("version.number", "(unknown)")
-  val copyrightString       = scalaPropOrElse("copyright.string", "Copyright 2002-2016, LAMP/EPFL and Lightbend, Inc.")
+  val copyrightString       = scalaPropOrElse("copyright.string", "Copyright 2002-2017, LAMP/EPFL and Lightbend, Inc.")
 
   /** This is the encoding to use reading in source files, overridden with -encoding.
    *  Note that it uses "prop" i.e. looks in the scala jar, not the system properties.
@@ -153,6 +153,12 @@ private[scala] trait PropertiesTrait {
 
   /* Some runtime values. */
   private[scala] def isAvian = javaVmName contains "Avian"
+
+  private[scala] def coloredOutputEnabled: Boolean = propOrElse("scala.color", "auto") match {
+    case "auto" => System.console() != null && !isWin
+    case a if a.toLowerCase() == "true" => true
+    case _ => false
+  }
 
   // This is looking for javac, tools.jar, etc.
   // Tries JDK_HOME first, then the more common but likely jre JAVA_HOME,

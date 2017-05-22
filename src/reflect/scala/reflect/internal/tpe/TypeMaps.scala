@@ -312,7 +312,7 @@ private[internal] trait TypeMaps {
     *  the corresponding class file might still not be read, so we do not
     *  know what the type parameters of the type are. Therefore
     *  the conversion of raw types to existential types might not have taken place
-    *  in ClassFileparser.sigToType (where it is usually done).
+    *  in ClassFileParser.sigToType (where it is usually done).
     */
   def rawToExistential = new TypeMap {
     private var expanded = immutable.Set[Symbol]()
@@ -335,7 +335,7 @@ private[internal] trait TypeMaps {
     object rawToExistentialInJava extends TypeMap {
       def apply(tp: Type): Type = tp match {
         // any symbol that occurs in a java sig, not just java symbols
-        // see https://issues.scala-lang.org/browse/SI-2454?focusedCommentId=46618
+        // see https://github.com/scala/bug/issues/2454#issuecomment-292371833
         case TypeRef(pre, sym, List()) if !sym.typeParams.isEmpty =>
           val eparams = typeParamsToExistentials(sym, sym.typeParams)
           existentialAbstraction(eparams, TypeRef(pre, sym, eparams map (_.tpe)))
@@ -404,7 +404,7 @@ private[internal] trait TypeMaps {
       case _ => super.mapOver(tp)
     }
 
-    // Do not discard the types of existential ident's. The
+    // Do not discard the types of existential idents. The
     // symbol of the Ident itself cannot be listed in the
     // existential's parameters, so the resulting existential
     // type would be ill-formed.
@@ -504,7 +504,7 @@ private[internal] trait TypeMaps {
         && isBaseClassOfEnclosingClass(sym.owner)
       )
 
-    private var capturedThisIds= 0
+    private var capturedThisIds = 0
     private def nextCapturedThisId() = { capturedThisIds += 1; capturedThisIds }
     /** Creates an existential representing a type parameter which appears
       *  in the prefix of a ThisType.
@@ -543,7 +543,7 @@ private[internal] trait TypeMaps {
       // reasons which aren't yet fully clear, we can arrive here holding a type
       // parameter whose owner is rhsSym, and which shares the name of an actual
       // type parameter of rhsSym, but which is not among the type parameters of
-      // rhsSym. One can see examples of it at SI-4365.
+      // rhsSym. One can see examples of it at scala/bug#4365.
       val argIndex = rhsSym.typeParams indexWhere (lhsSym.name == _.name)
       // don't be too zealous with the exceptions, see #2641
       if (argIndex < 0 && rhs.parents.exists(typeIsErroneous))
@@ -594,7 +594,7 @@ private[internal] trait TypeMaps {
         else if (!matchesPrefixAndClass(pre, clazz)(tparam.owner))
           loop(nextBase.prefix, clazz.owner)
         else nextBase match {
-          case NoType                         => loop(NoType, clazz.owner) // backstop for SI-2797, must remove `SingletonType#isHigherKinded` and run pos/t2797.scala to get here.
+          case NoType                         => loop(NoType, clazz.owner) // backstop for scala/bug#2797, must remove `SingletonType#isHigherKinded` and run pos/t2797.scala to get here.
           case applied @ TypeRef(_, _, _)     => correspondingTypeArgument(classParam, applied)
           case ExistentialType(eparams, qtpe) => captureSkolems(eparams) ; loop(qtpe, clazz)
           case t                              => abort(s"$tparam in ${tparam.owner} cannot be instantiated from ${seenFromPrefix.widen}")
@@ -946,7 +946,7 @@ private[internal] trait TypeMaps {
      *
      * (1) If `T` is stable, we can just use that.
      *
-     * (2) SI-3873: it'd be unsound to instantiate `param.type` to an unstable `T`,
+     * (2) scala/bug#3873: it'd be unsound to instantiate `param.type` to an unstable `T`,
      * so we approximate to `X forSome {type X <: T with Singleton}` -- we can't soundly say more.
      */
     def apply(tp: Type): Type = tp match {

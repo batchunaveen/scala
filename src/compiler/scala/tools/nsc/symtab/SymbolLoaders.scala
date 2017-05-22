@@ -90,7 +90,7 @@ abstract class SymbolLoaders {
       // object with the same name. Rather than render them unusable,
       // offer a setting to resolve the conflict one way or the other.
       // This was motivated by the desire to use YourKit probes, which
-      // require yjp.jar at runtime. See SI-2089.
+      // require yjp.jar at runtime. See scala/bug#2089.
       if (settings.termConflict.isDefault)
         throw new TypeError(
           s"$root contains object and package with same name: $name\none of them needs to be removed from classpath"
@@ -122,13 +122,18 @@ abstract class SymbolLoaders {
    *  and give them `completer` as type.
    */
   def enterClassAndModule(root: Symbol, name: String, getCompleter: (ClassSymbol, ModuleSymbol) => SymbolLoader) {
-    val clazz = newClass(root, name)
-    val module = newModule(root, name)
-    val completer = getCompleter(clazz, module)
-    enterClass(root, clazz, completer)
-    enterModule(root, module, completer)
+    val clazz0 = newClass(root, name)
+    val module0 = newModule(root, name)
+    val completer = getCompleter(clazz0, module0)
+    // enterClass/Module may return an existing symbol instead of the ones we created above
+    // this may happen when there's both sources and binaries on the classpath, but the class
+    // name is different from the file name, so the classpath can't match the binary and source
+    // representation. `companionModule/Class` prefers the source version, so we should be careful
+    // to reuse the symbols returned below.
+    val clazz = enterClass(root, clazz0, completer)
+    val module = enterModule(root, module0, completer)
     if (!clazz.isAnonymousClass) {
-      // Diagnostic for SI-7147
+      // Diagnostic for scala/bug#7147
       def msg: String = {
         def symLocation(sym: Symbol) = if (sym == null) "null" else s"${clazz.fullLocationString} (from ${clazz.associatedFile})"
         sm"""Inconsistent class/module symbol pair for `$name` loaded from ${symLocation(root)}.
@@ -291,10 +296,10 @@ abstract class SymbolLoaders {
         SymbolLoaders.this.lookupMemberAtTyperPhaseIfPossible(sym, name)
       /*
        * The type alias and the cast (where the alias is used) is needed due to problem described
-       * in SI-7585. In this particular case, the problem is that we need to make sure that symbol
+       * in scala/bug#7585. In this particular case, the problem is that we need to make sure that symbol
        * table used by symbol loaders is exactly the same as they one used by classfileParser.
        * If you look at the path-dependent types we have here everything should work out ok but
-       * due to issue described in SI-7585 type-checker cannot tie the knot here.
+       * due to issue described in scala/bug#7585 type-checker cannot tie the knot here.
        *
        */
       private type SymbolLoadersRefined = SymbolLoaders { val symbolTable: classfileParser.symbolTable.type }

@@ -19,7 +19,7 @@ mkdir -p $IVY_CACHE
 rm -rf $IVY_CACHE/cache/org.scala-lang
 
 SBT_CMD=${sbtCmd-sbt}
-SBT_CMD="$SBT_CMD -sbt-version 0.13.13"
+SBT_CMD="$SBT_CMD -sbt-version 0.13.15"
 
 # temp dir where all 'non-build' operation are performed
 TMP_ROOT_DIR=$(mktemp -d -t pr-scala.XXXX)
@@ -156,15 +156,16 @@ EOF
 }
 
 # Generate a repositories file with all allowed repositories in our build environment.
-# Takes one optional argument, the private repository URL.
+# Takes a variable number of additional repositories as argument.
 # See http://www.scala-sbt.org/0.13/docs/Proxy-Repositories.html
 function generateRepositoriesConfig() {
   jcenterCacheUrl=${jcenterCacheUrl-"https://scala-ci.typesafe.com/artifactory/jcenter/"}
   sbtRepositoryConfig="$scriptsDir/sbt-repositories-config"
   echo > "$sbtRepositoryConfig" '[repositories]'
-  if [ -n "$1" ]
-  then
-    echo >> "$sbtRepositoryConfig" "  private-repo: $1"
+  if [[ $# -gt 0 ]]; then
+    for i in $(seq 1 $#); do
+      echo >> "$sbtRepositoryConfig" "  script-repo-$i: ${!i}"
+    done
   fi
   cat >> "$sbtRepositoryConfig" << EOF
   jcenter-cache: $jcenterCacheUrl

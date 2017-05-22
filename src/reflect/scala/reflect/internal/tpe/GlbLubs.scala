@@ -13,7 +13,7 @@ private[internal] trait GlbLubs {
   import definitions._
   import TypesStats._
 
-  private final val printLubs = scala.sys.props contains "scalac.debug.lub"
+  private final val printLubs = System.getProperty("scalac.debug.lub") != null
   private final val strictInference = settings.strictInference
 
   /** In case anyone wants to turn off lub verification without reverting anything. */
@@ -136,7 +136,7 @@ private[internal] trait GlbLubs {
           mergePrefixAndArgs(ts1, Covariant, depth) match {
             case NoType => loop(pretypes, tails)
             case tp if strictInference && willViolateRecursiveBounds(tp, ts0, ts1) =>
-              log(s"Breaking recursion in lublist, advancing frontier and discaring merged prefix/args from $tp")
+              log(s"Breaking recursion in lublist, advancing frontier and discarding merged prefix/args from $tp")
               loop(pretypes, tails)
             case tp =>
               loop(tp :: pretypes, tails)
@@ -329,7 +329,7 @@ private[internal] trait GlbLubs {
           def lubsym(proto: Symbol): Symbol = {
             val prototp = lubThisType.memberInfo(proto)
             val syms = narrowts map (t =>
-              // SI-7602 With erroneous code, we could end up with overloaded symbols after filtering
+              // scala/bug#7602 With erroneous code, we could end up with overloaded symbols after filtering
               //         so `suchThat` unsuitable.
               t.nonPrivateMember(proto.name).filter(sym =>
                 sym.tpe matches prototp.substThis(lubThisType.typeSymbol, t)))
@@ -387,7 +387,7 @@ private[internal] trait GlbLubs {
             else lubBase
           }
         }
-      // dropIllegalStarTypes is a localized fix for SI-6897. We should probably
+      // dropIllegalStarTypes is a localized fix for scala/bug#6897. We should probably
       // integrate that transformation at a lower level in master, but lubs are
       // the likely and maybe only spot they escape, so fixing here for 2.10.1.
       existentialAbstraction(tparams, dropIllegalStarTypes(lubType))

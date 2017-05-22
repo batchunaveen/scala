@@ -186,7 +186,7 @@ trait ProcessBuilder extends Source with Sink {
   def lineStream(log: ProcessLogger): Stream[String]
 
   /** Deprecated (renamed).  Use `lineStream(log: ProcessLogger)` instead. */
-  @deprecated("use stream instead", "2.11.0")
+  @deprecated("use lineStream instead", "2.11.0")
   def lines(log: ProcessLogger): Stream[String] = lineStream(log)
 
   /** Starts the process represented by this builder.  The output is returned as
@@ -210,7 +210,7 @@ trait ProcessBuilder extends Source with Sink {
   def lineStream_!(log: ProcessLogger): Stream[String]
 
   /** Deprecated (renamed).  Use `lineStream_!(log: ProcessLogger)` instead. */
-  @deprecated("use stream_! instead", "2.11.0")
+  @deprecated("use lineStream_! instead", "2.11.0")
   def lines_!(log: ProcessLogger): Stream[String] = lineStream_!(log)
 
   /** Starts the process represented by this builder, blocks until it exits, and
@@ -257,10 +257,9 @@ trait ProcessBuilder extends Source with Sink {
     */
   def run(connectInput: Boolean): Process
 
-  /** Starts the process represented by this builder, blocks until it exits, and
-    * returns the exit code.  Standard output and error are sent to the given
-    * ProcessLogger.  The newly started process reads from standard input of the
-    * current process if `connectInput` is true.
+  /** Starts the process represented by this builder.  Standard output and error
+    * are sent to the given ProcessLogger.  The newly started process reads from
+    * standard input of the current process if `connectInput` is true.
     */
   def run(log: ProcessLogger, connectInput: Boolean): Process
 

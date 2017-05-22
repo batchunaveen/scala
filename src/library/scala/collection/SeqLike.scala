@@ -11,7 +11,6 @@ package collection
 
 import immutable.{ List, Range }
 import generic._
-import parallel.ParSeq
 import scala.math.Ordering
 
 /** A template trait for sequences of type `Seq[A]`
@@ -58,7 +57,7 @@ import scala.math.Ordering
  *  @define orderDependent
  *  @define orderDependentFold
  */
-trait SeqLike[+A, +Repr] extends Any with IterableLike[A, Repr] with GenSeqLike[A, Repr] with Parallelizable[A, ParSeq[A]] { self =>
+trait SeqLike[+A, +Repr] extends Any with IterableLike[A, Repr] with GenSeqLike[A, Repr] { self =>
 
   override protected[this] def thisCollection: Seq[A] = this.asInstanceOf[Seq[A]]
   override protected[this] def toCollection(repr: Repr): Seq[A] = repr.asInstanceOf[Seq[A]]
@@ -66,8 +65,6 @@ trait SeqLike[+A, +Repr] extends Any with IterableLike[A, Repr] with GenSeqLike[
   def length: Int
 
   def apply(idx: Int): A
-
-  protected[this] override def parCombiner = ParSeq.newCombiner[A]
 
   /** Compares the length of this $coll to a test value.
    *
@@ -113,13 +110,12 @@ trait SeqLike[+A, +Repr] extends Any with IterableLike[A, Repr] with GenSeqLike[
   }
 
   def indexWhere(p: A => Boolean, from: Int): Int = {
-    var i = from max 0
+    var i = math.max(from, 0)
     val it = iterator.drop(from)
     while (it.hasNext) {
       if (p(it.next())) return i
       else i += 1
     }
-
     -1
   }
 
@@ -233,7 +229,13 @@ trait SeqLike[+A, +Repr] extends Any with IterableLike[A, Repr] with GenSeqLike[
       if (idx < 0)
         _hasNext = false
       else {
-        var sum = nums.slice(idx + 1, nums.length).sum + 1
+        // OPT: hand rolled version of `sum = nums.view(idx + 1, nums.length).sum + 1`
+        var sum = 1
+        var i = idx + 1
+        while (i < nums.length) {
+          sum += nums(i)
+          i += 1
+        }
         nums(idx) -= 1
         for (k <- (idx+1) until nums.length) {
           nums(k) = sum min cnts(k)

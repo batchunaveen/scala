@@ -67,7 +67,7 @@ abstract class BCodeBodyBuilder extends BCodeSkelBuilder {
           if (!isStatic) { genLoadQualifier(lhs) }
           genLoad(rhs, symInfoTK(lhs.symbol))
           lineNumber(tree)
-          // receiverClass is used in the bytecode to access the field. using sym.owner may lead to IllegalAccessError, SI-4283
+          // receiverClass is used in the bytecode to access the field. using sym.owner may lead to IllegalAccessError, scala/bug#4283
           val receiverClass = qual.tpe.typeSymbol
           fieldStore(lhs.symbol, receiverClass)
 
@@ -306,7 +306,7 @@ abstract class BCodeBodyBuilder extends BCodeSkelBuilder {
           genLoadArguments(dynamicArgs, qual.symbol.info.params.map(param => typeToBType(param.info)))
           mnode.visitInvokeDynamicInsn(qual.symbol.name.encoded, descriptor.descriptor, bootstrapDescriptor, bootstrapArgs : _*)
 
-        case ApplyDynamic(qual, args) => sys.error("No invokedynamic support yet.")
+        case ApplyDynamic(qual, args) => abort("No invokedynamic support yet.")
 
         case This(qual) =>
           val symIsModuleClass = tree.symbol.isModuleClass
@@ -331,7 +331,7 @@ abstract class BCodeBodyBuilder extends BCodeSkelBuilder {
           generatedType = symInfoTK(sym)
           val qualSafeToElide = treeInfo isQualifierSafeToElide qualifier
           def genLoadQualUnlessElidable() { if (!qualSafeToElide) { genLoadQualifier(tree) } }
-          // receiverClass is used in the bytecode to access the field. using sym.owner may lead to IllegalAccessError, SI-4283
+          // receiverClass is used in the bytecode to access the field. using sym.owner may lead to IllegalAccessError, scala/bug#4283
           def receiverClass = qualifier.tpe.typeSymbol
           if (sym.isModule) {
             genLoadQualUnlessElidable()
@@ -918,7 +918,7 @@ abstract class BCodeBodyBuilder extends BCodeSkelBuilder {
         (args zip params) filterNot isTrivial
       }
 
-      // first push *all* arguments. This makes sure muliple uses of the same labelDef-var will all denote the (previous) value.
+      // first push *all* arguments. This makes sure multiple uses of the same labelDef-var will all denote the (previous) value.
       aps foreach { case (arg, param) => genLoad(arg, locals(param).tk) } // `locals` is known to contain `param` because `genDefDef()` visited `labelDefsAtOrUnder`
 
       // second assign one by one to the LabelDef's variables.
@@ -939,8 +939,8 @@ abstract class BCodeBodyBuilder extends BCodeSkelBuilder {
       val module = (
         if (!tree.symbol.isPackageClass) tree.symbol
         else tree.symbol.info.packageObject match {
-          case NoSymbol => abort(s"SI-5604: Cannot use package as value: $tree")
-          case s        => abort(s"SI-5604: found package class where package object expected: $tree")
+          case NoSymbol => abort(s"scala/bug#5604: Cannot use package as value: $tree")
+          case s        => abort(s"scala/bug#5604: found package class where package object expected: $tree")
         }
       )
       lineNumber(tree)
@@ -1264,14 +1264,22 @@ abstract class BCodeBodyBuilder extends BCodeSkelBuilder {
     def genEqEqPrimitive(l: Tree, r: Tree, success: asm.Label, failure: asm.Label, targetIfNoJump: asm.Label, pos: Position) {
 
       /* True if the equality comparison is between values that require the use of the rich equality
-       * comparator (scala.runtime.Comparator.equals). This is the case when either side of the
+       * comparator (scala.runtime.BoxesRunTime.equals). This is the case when either side of the
        * comparison might have a run-time type subtype of java.lang.Number or java.lang.Character.
-       * When it is statically known that both sides are equal and subtypes of Number of Character,
-       * not using the rich equality is possible (their own equals method will do ok.)
+       *
+       * When it is statically known that both sides are equal and subtypes of Number or Character,
+       * not using the rich equality is possible (their own equals method will do ok), except for
+       * java.lang.Float and java.lang.Double: their `equals` have different behavior around `NaN`
+       * and `-0.0`, see Javadoc (scala-dev#329).
        */
       val mustUseAnyComparator: Boolean = {
-        val areSameFinals = l.tpe.isFinalType && r.tpe.isFinalType && (l.tpe =:= r.tpe)
-        !areSameFinals && platform.isMaybeBoxed(l.tpe.typeSymbol) && platform.isMaybeBoxed(r.tpe.typeSymbol)
+        platform.isMaybeBoxed(l.tpe.typeSymbol) && platform.isMaybeBoxed(r.tpe.typeSymbol) && {
+          val areSameFinals = l.tpe.isFinalType && r.tpe.isFinalType && (l.tpe =:= r.tpe) && {
+            val sym = l.tpe.typeSymbol
+            sym != BoxedFloatClass && sym != BoxedDoubleClass
+          }
+          !areSameFinals
+        }
       }
 
       if (mustUseAnyComparator) {
@@ -1296,7 +1304,7 @@ abstract class BCodeBodyBuilder extends BCodeSkelBuilder {
           genLoad(l, ObjectRef)
           genCZJUMP(success, failure, TestOp.EQ, ObjectRef, targetIfNoJump)
         } else if (isNonNullExpr(l)) {
-          // SI-7852 Avoid null check if L is statically non-null.
+          // scala/bug#7852 Avoid null check if L is statically non-null.
           genLoad(l, ObjectRef)
           genLoad(r, ObjectRef)
           genCallMethod(Object_equals, InvokeStyle.Virtual, pos)

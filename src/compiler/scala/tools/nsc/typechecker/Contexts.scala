@@ -62,17 +62,18 @@ trait Contexts { self: Analyzer =>
 
   def warnUnusedImports(unit: CompilationUnit) = if (!unit.isJava) {
     for (imps <- allImportInfos.remove(unit)) {
-      for (imp <- imps.reverse.distinct) {
+      for (imp <- imps.distinct.reverse) {
         val used = allUsedSelectors(imp)
-        def isMask(s: ImportSelector) = s.name != nme.WILDCARD && s.rename == nme.WILDCARD
-
-        imp.tree.selectors filterNot (s => isMask(s) || used(s)) foreach { sel =>
-          reporter.warning(imp posOf sel, "Unused import")
-        }
+        for (sel <- imp.tree.selectors if !isMaskImport(sel) && !used(sel))
+          reporter.warning(imp.posOf(sel), "Unused import")
       }
       allUsedSelectors --= imps
     }
   }
+
+  def isMaskImport(s: ImportSelector): Boolean = s.name != nme.WILDCARD && s.rename == nme.WILDCARD
+  def isIndividualImport(s: ImportSelector): Boolean = s.name != nme.WILDCARD && s.rename != nme.WILDCARD
+  def isWildcardImport(s: ImportSelector): Boolean = s.name == nme.WILDCARD
 
   var lastAccessCheckDetails: String = ""
 
@@ -90,7 +91,7 @@ trait Contexts { self: Analyzer =>
     if (settings.noimports) Nil
     else if (unit.isJava) RootImports.javaList
     else if (settings.nopredef || treeInfo.noPredefImportForUnit(unit.body)) {
-      // SI-8258 Needed for the presentation compiler using -sourcepath, otherwise cycles can occur. See the commit
+      // scala/bug#8258 Needed for the presentation compiler using -sourcepath, otherwise cycles can occur. See the commit
       //         message for this ticket for an example.
       debuglog("Omitted import of Predef._ for " + unit)
       RootImports.javaAndScalaList
@@ -436,7 +437,7 @@ trait Contexts { self: Analyzer =>
      * Construct a child context. The parent and child will share the report buffer.
      * Compare with `makeSilent`, in which the child has a fresh report buffer.
      *
-     * If `tree` is an `Import`, that import will be avaiable at the head of
+     * If `tree` is an `Import`, that import will be available at the head of
      * `Context#imports`.
      */
     def make(tree: Tree = tree, owner: Symbol = owner,
@@ -451,7 +452,7 @@ trait Contexts { self: Analyzer =>
         case _         => false
       }
       val isImport = tree match {
-        // The guard is for SI-8403. It prevents adding imports again in the context created by
+        // The guard is for scala/bug#8403. It prevents adding imports again in the context created by
         // `Namer#createInnerNamer`
         case _: Import if tree != this.tree => true
         case _                              => false
@@ -479,7 +480,7 @@ trait Contexts { self: Analyzer =>
       c.enclClass          = if (isTemplateOrPackage) c else enclClass
       c(ConstructorSuffix) = !isTemplateOrPackage && c(ConstructorSuffix)
 
-      // SI-8245 `isLazy` need to skip lazy getters to ensure `return` binds to the right place
+      // scala/bug#8245 `isLazy` need to skip lazy getters to ensure `return` binds to the right place
       c.enclMethod         = if (isDefDef && !owner.isLazy) c else enclMethod
 
       if (tree != outer.tree)
@@ -502,7 +503,7 @@ trait Contexts { self: Analyzer =>
     }
 
     def make(tree: Tree, owner: Symbol, scope: Scope): Context =
-      // TODO SI-7345 Moving this optimization into the main overload of `make` causes all tests to fail.
+      // TODO scala/bug#7345 Moving this optimization into the main overload of `make` causes all tests to fail.
       //              even if it is extended to check that `unit == this.unit`. Why is this?
       if (tree == this.tree && owner == this.owner && scope == this.scope) this
       else make(tree, owner, scope, unit)
@@ -822,7 +823,6 @@ trait Contexts { self: Analyzer =>
     private def collectImplicitImports(imp: ImportInfo): List[ImplicitInfo] = {
       val qual = imp.qual
 
-      val qualSym = qual.tpe.typeSymbol
       val pre = qual.tpe
       def collect(sels: List[ImportSelector]): List[ImplicitInfo] = sels match {
         case List() =>
@@ -847,11 +847,11 @@ trait Contexts { self: Analyzer =>
       collect(imp.tree.selectors)
     }
 
-    /* SI-5892 / SI-4270: `implicitss` can return results which are not accessible at the
+    /* scala/bug#5892 / scala/bug#4270: `implicitss` can return results which are not accessible at the
      * point where implicit search is triggered. Example: implicits in (annotations of)
-     * class type parameters (SI-5892). The `context.owner` is the class symbol, therefore
+     * class type parameters (scala/bug#5892). The `context.owner` is the class symbol, therefore
      * `implicitss` will return implicit conversions defined inside the class. These are
-     * filtered out later by `eligibleInfos` (SI-4270 / 9129cfe9), as they don't type-check.
+     * filtered out later by `eligibleInfos` (scala/bug#4270 / 9129cfe9), as they don't type-check.
      */
     def implicitss: List[List[ImplicitInfo]] = {
       val nextOuter = this.nextOuter
@@ -1045,7 +1045,7 @@ trait Contexts { self: Analyzer =>
         logResult(s"overloaded symbol in $pre")(owner.newOverloaded(pre, entries map (_.sym)))
 
       // Constructor lookup should only look in the decls of the enclosing class
-      // not in the self-type, nor in the enclosing context, nor in imports (SI-4460, SI-6745)
+      // not in the self-type, nor in the enclosing context, nor in imports (scala/bug#4460, scala/bug#6745)
       if (name == nme.CONSTRUCTOR) return {
         val enclClassSym = cx.enclClass.owner
         val scope = cx.enclClass.prefix.baseType(enclClassSym).decls
@@ -1193,26 +1193,33 @@ trait Contexts { self: Analyzer =>
       res
     }
 
-    final def lookupCompanionOf(original: Symbol): Symbol = {
+    final def lookupCompanionInIncompleteOwner(original: Symbol): Symbol = {
+      /* Search scopes in current and enclosing contexts for the definition of `symbol` */
+      def lookupScopeEntry(symbol: Symbol): ScopeEntry = {
+        var res: ScopeEntry = null
+        var ctx = this
+        while (res == null && ctx.outer != ctx) {
+          val s = ctx.scope lookupSymbolEntry symbol
+          if (s != null)
+            res = s
+          else
+            ctx = ctx.outer
+        }
+        res
+      }
+
+      // 1) Must be owned by the same Scope, to ensure that in
+      //   `{ class C; { ...; object C } }`, the class is not seen as a companion of the object.
+      // 2) Must be a class and module symbol, so that `{ class C; def C }` or `{ type T; object T }` are not companions.
       lookupScopeEntry(original) match {
         case null => NoSymbol
-        case entry => entry.owner.lookupCompanion(original)
+        case entry =>
+          def isCompanion(sym: Symbol): Boolean =
+            (original.isModule && sym.isClass || sym.isModule && original.isClass) && sym.isCoDefinedWith(original)
+          entry.owner.lookupNameInSameScopeAs(original, original.name.companionName).filter(isCompanion)
       }
     }
 
-    /** Search scopes in current and enclosing contexts for the definition of `symbol` */
-    private def lookupScopeEntry(symbol: Symbol): ScopeEntry = {
-      var res: ScopeEntry = null
-      var ctx = this
-      while (res == null && ctx.outer != ctx) {
-        val s = ctx.scope lookupSymbolEntry symbol
-        if (s != null)
-          res = s
-        else
-          ctx = ctx.outer
-      }
-      res
-    }
   } //class Context
 
   /** A `Context` focussed on an `Import` tree */
@@ -1346,7 +1353,7 @@ trait Contexts { self: Analyzer =>
       _warningBuffer = null
     }
 
-    // [JZ] Contexts, pre- the SI-7345 refactor, avoided allocating the buffers until needed. This
+    // [JZ] Contexts, pre- the scala/bug#7345 refactor, avoided allocating the buffers until needed. This
     // is replicated here out of conservatism.
     private def newBuffer[A]    = mutable.LinkedHashSet.empty[A] // Important to use LinkedHS for stable results.
     final protected def errorBuffer   = { if (_errorBuffer == null) _errorBuffer = newBuffer; _errorBuffer }
@@ -1402,7 +1409,8 @@ trait Contexts { self: Analyzer =>
 
   class ImportInfo(val tree: Import, val depth: Int) {
     def pos = tree.pos
-    def posOf(sel: ImportSelector) = tree.pos withPoint sel.namePos
+    def posOf(sel: ImportSelector) =
+      if (sel.namePos >= 0) tree.pos withPoint sel.namePos else tree.pos
 
     /** The prefix expression */
     def qual: Tree = tree.symbol.info match {
@@ -1448,7 +1456,7 @@ trait Contexts { self: Analyzer =>
       if (record && settings.warnUnusedImport && selectors.nonEmpty && result != NoSymbol && pos != NoPosition)
         recordUsage(current, result)
 
-      // Harden against the fallout from bugs like SI-6745
+      // Harden against the fallout from bugs like scala/bug#6745
       //
       // [JZ] I considered issuing a devWarning and moving the
       //      check inside the above loop, as I believe that

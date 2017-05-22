@@ -308,7 +308,7 @@ sealed abstract class Option[+A] extends Product with Serializable {
    * @param left the expression to evaluate and return if this is empty
    * @see toLeft
    */
-  @inline final def toRight[X](left: => X) =
+  @inline final def toRight[X](left: => X): Either[X, A] =
     if (isEmpty) Left(left) else Right(this.get)
 
   /** Returns a [[scala.util.Right]] containing the given
@@ -319,7 +319,7 @@ sealed abstract class Option[+A] extends Product with Serializable {
    * @param right the expression to evaluate and return if this is empty
    * @see toRight
    */
-  @inline final def toLeft[X](right: => X) =
+  @inline final def toLeft[X](right: => X): Either[A, X] =
     if (isEmpty) Right(right) else Left(this.get)
 }
 
@@ -330,11 +330,9 @@ sealed abstract class Option[+A] extends Product with Serializable {
  *  @version 1.0, 16/07/2003
  */
 @SerialVersionUID(1234815782226070388L) // value computed by serialver for 2.11.2, annotation added in 2.11.4
-final case class Some[+A](@deprecatedName('x, "2.12.0") value: A) extends Option[A] {
+final case class Some[+A](value: A) extends Option[A] {
   def isEmpty = false
   def get = value
-
-  @deprecated("Use .value instead.", "2.12.0") def x: A = value
 }
 
 

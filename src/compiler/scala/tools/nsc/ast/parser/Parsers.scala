@@ -234,7 +234,7 @@ self =>
       else currentRun.parsing.incompleteInputError(o2p(offset), msg)
     }
 
-    /** parse unit. If there are inbalanced braces,
+    /** parse unit. If there are unbalanced braces,
      *  try to correct them and reparse.
      */
     def smartParse(): Tree = withSmartParsing {
@@ -812,7 +812,7 @@ self =>
         false
       } else true
 
-    /** Strip the artifitial `Parens` node to create a tuple term Tree. */
+    /** Strip the artificial `Parens` node to create a tuple term Tree. */
     def stripParens(t: Tree) = t match {
       case Parens(ts) => atPos(t.pos) { makeSafeTupleTerm(ts, t.pos.point) }
       case _ => t
@@ -1138,7 +1138,7 @@ self =>
     def identOrMacro(): Name = if (isMacro) rawIdent() else ident()
 
     def selector(t: Tree): Tree = {
-      val point = if(isIdent) in.offset else in.lastOffset //SI-8459
+      val point = if(isIdent) in.offset else in.lastOffset //scala/bug#8459
       //assert(t.pos.isDefined, t)
       if (t != EmptyTree)
         Select(t, ident(skipIt = false)) setPos r2p(t.pos.start, point, in.lastOffset)
@@ -1263,8 +1263,8 @@ self =>
         case CHARLIT                => in.charVal
         case INTLIT                 => in.intVal(isNegated).toInt
         case LONGLIT                => in.intVal(isNegated)
-        case FLOATLIT               => in.floatVal(isNegated).toFloat
-        case DOUBLELIT              => in.floatVal(isNegated)
+        case FLOATLIT               => in.floatVal(isNegated)
+        case DOUBLELIT              => in.doubleVal(isNegated)
         case STRINGLIT | STRINGPART => in.strVal.intern()
         case TRUE                   => true
         case FALSE                  => false
@@ -1947,19 +1947,22 @@ self =>
        *                |   Pattern3
        *  }}}
        */
-      def pattern2(): Tree = {
-        val p = pattern3()
-
-        if (in.token != AT) p
-        else p match {
-          case Ident(nme.WILDCARD) =>
-            in.nextToken()
-            pattern3()
-          case Ident(name) =>
-            in.nextToken()
-            atPos(p.pos.start) { Bind(name, pattern3()) }
-          case _ => p
-        }
+      def pattern2(): Tree = (pattern3(), in.token) match {
+        case (Ident(nme.WILDCARD), AT) =>
+          in.nextToken()
+          pattern3()
+        case (p @ Ident(name), AT) =>
+          in.nextToken()
+          val body = pattern3()
+          atPos(p.pos.start, p.pos.start, body.pos.end) {
+            val t = Bind(name, body)
+            body match {
+              case Ident(nme.WILDCARD) => t updateAttachment AtBoundIdentifierAttachment
+              case _ if !settings.warnUnusedPatVars => t updateAttachment AtBoundIdentifierAttachment
+              case _ => t
+            }
+          }
+        case (p, _) => p
       }
 
       /** {{{
@@ -1970,7 +1973,7 @@ self =>
       def pattern3(): Tree = {
         val top = simplePattern(badPattern3)
         val base = opstack
-        // See SI-3189, SI-4832 for motivation. Cf SI-3480 for counter-motivation.
+        // See scala/bug#3189, scala/bug#4832 for motivation. Cf scala/bug#3480 for counter-motivation.
         def isCloseDelim = in.token match {
           case RBRACE => isXML
           case RPAREN => !isXML
@@ -2236,30 +2239,56 @@ self =>
      *  }}}
      */
     def paramClauses(owner: Name, contextBounds: List[Tree], ofCaseClass: Boolean): List[List[ValDef]] = {
-      var implicitmod = 0
-      var caseParam = ofCaseClass
-      def paramClause(): List[ValDef] = {
-        if (in.token == RPAREN)
-          return Nil
-
-        if (in.token == IMPLICIT) {
-          in.nextToken()
-          implicitmod = Flags.IMPLICIT
-        }
-        commaSeparated(param(owner, implicitmod, caseParam  ))
-      }
-      val vds = new ListBuffer[List[ValDef]]
+      var implicitSection = -1
+      var implicitOffset  = -1
+      var warnAt          = -1
+      var caseParam       = ofCaseClass
+      val vds   = new ListBuffer[List[ValDef]]
       val start = in.offset
+      def paramClause(): List[ValDef] = if (in.token == RPAREN) Nil else {
+        val implicitmod = 
+          if (in.token == IMPLICIT) {
+            if (implicitOffset == -1) { implicitOffset = in.offset ; implicitSection = vds.length }
+            else if (warnAt == -1) warnAt = in.offset
+            in.nextToken()
+            Flags.IMPLICIT
+          } else 0
+        commaSeparated(param(owner, implicitmod, caseParam))
+      }
       newLineOptWhenFollowedBy(LPAREN)
-      if (ofCaseClass && in.token != LPAREN)
-        syntaxError(in.lastOffset, "case classes without a parameter list are not allowed;\n"+
-                                   "use either case objects or case classes with an explicit `()' as a parameter list.")
-      while (implicitmod == 0 && in.token == LPAREN) {
+      while (in.token == LPAREN) {
         in.nextToken()
         vds += paramClause()
         accept(RPAREN)
         caseParam = false
         newLineOptWhenFollowedBy(LPAREN)
+      }
+      if (ofCaseClass) {
+        if (vds.isEmpty)
+          syntaxError(start, s"case classes must have a parameter list; try 'case class ${owner.encoded
+                                         }()' or 'case object ${owner.encoded}'")
+        else if (vds.head.nonEmpty && vds.head.head.mods.isImplicit) {
+          if (settings.isScala213)
+            syntaxError(start, s"case classes must have a non-implicit parameter list; try 'case class ${
+                                         owner.encoded}()${ vds.map(vs => "(...)").mkString }'")
+          else {
+            deprecationWarning(start, s"case classes should have a non-implicit parameter list; adapting to 'case class ${
+                                         owner.encoded}()${ vds.map(vs => "(...)").mkString }'", "2.12.2")
+            vds.insert(0, List.empty[ValDef])
+            vds(1) = vds(1).map(vd => copyValDef(vd)(mods = vd.mods & ~Flags.CASEACCESSOR))
+            if (implicitSection != -1) implicitSection += 1
+          }
+        }
+      }
+      if (implicitSection != -1 && implicitSection != vds.length - 1)
+        syntaxError(implicitOffset, "an implicit parameter section must be last")
+      if (warnAt != -1)
+        syntaxError(warnAt, "multiple implicit parameter sections are not allowed")
+      else if (settings.warnExtraImplicit) {
+        // guard against anomalous class C(private implicit val x: Int)(implicit s: String)
+        val ttl = vds.count { case ValDef(mods, _, _, _) :: _ => mods.isImplicit ; case _ => false }
+        if (ttl > 1)
+          warning(in.offset, s"$ttl parameter sections are effectively implicit")
       }
       val result = vds.toList
       if (owner == nme.CONSTRUCTOR && (result.isEmpty || (result.head take 1 exists (_.mods.isImplicit)))) {
@@ -2828,9 +2857,8 @@ self =>
           val (constrMods, vparamss) =
             if (mods.isTrait) (Modifiers(Flags.TRAIT), List())
             else (accessModifierOpt(), paramClauses(name, classContextBounds, ofCaseClass = mods.isCase))
-          var mods1 = mods
-          val template = templateOpt(mods1, name, constrMods withAnnotations constrAnnots, vparamss, tstart)
-          val result = gen.mkClassDef(mods1, name, tparams, template)
+          val template = templateOpt(mods, name, constrMods withAnnotations constrAnnots, vparamss, tstart)
+          val result = gen.mkClassDef(mods, name, tparams, template)
           // Context bounds generate implicit parameters (part of the template) with types
           // from tparams: we need to ensure these don't overlap
           if (!classContextBounds.isEmpty)

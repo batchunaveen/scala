@@ -211,7 +211,7 @@ abstract class UnPickler {
           case nme.ROOTPKG  => loadingMirror.RootPackage
           case _            =>
             val decl = owner match {
-              case stub: StubSymbol => NoSymbol // SI-8502 Don't call .info and fail the stub
+              case stub: StubSymbol => NoSymbol // scala/bug#8502 Don't call .info and fail the stub
               case _ => owner.info.decl(name)
             }
             adjust(decl)
@@ -219,9 +219,10 @@ abstract class UnPickler {
 
         def moduleAdvice(missing: String): String = {
           val module =
-            if      (missing.startsWith("scala.xml"))                Some(("org.scala-lang.modules", "scala-xml"))
-            else if (missing.startsWith("scala.util.parsing"))       Some(("org.scala-lang.modules", "scala-parser-combinators"))
-            else if (missing.startsWith("scala.swing"))              Some(("org.scala-lang.modules", "scala-swing"))
+            if      (missing.startsWith("scala.xml"))                 Some(("org.scala-lang.modules", "scala-xml"))
+            else if (missing.startsWith("scala.util.parsing"))        Some(("org.scala-lang.modules", "scala-parser-combinators"))
+            else if (missing.startsWith("scala.swing"))               Some(("org.scala-lang.modules", "scala-swing"))
+            else if (missing.startsWith("scala.collection.parallel")) Some(("org.scala-lang.modules", "scala-parallel-collections"))
             else None
 
           (module map { case (group, art) =>
@@ -246,14 +247,15 @@ abstract class UnPickler {
             adjust(mirrorThatLoaded(owner).missingHook(owner, name)) orElse {
               // (4) Create a stub symbol to defer hard failure a little longer.
               val advice = moduleAdvice(s"${owner.fullName}.$name")
+              val lazyCompletingSymbol = completingStack.headOption.getOrElse(NoSymbol)
               val missingMessage =
-                s"""|missing or invalid dependency detected while loading class file '$filename'.
-                    |Could not access ${name.longString} in ${owner.kindString} ${owner.fullName},
-                    |because it (or its dependencies) are missing. Check your build definition for
-                    |missing or conflicting dependencies. (Re-run with `-Ylog-classpath` to see the problematic classpath.)
+                s"""|Symbol '${name.nameKind} ${owner.fullName}.$name' is missing from the classpath.
+                    |This symbol is required by '${lazyCompletingSymbol.kindString} ${lazyCompletingSymbol.fullName}'.
+                    |Make sure that ${name.longString} is in your classpath and check for conflicting dependencies with `-Ylog-classpath`.
                     |A full rebuild may help if '$filename' was compiled against an incompatible version of ${owner.fullName}.$advice""".stripMargin
               val stubName = if (tag == EXTref) name else name.toTypeName
-              owner.newStubSymbol(stubName, missingMessage)
+              // The position of the error message is set by `newStubSymbol`
+              NoSymbol.newStubSymbol(stubName, missingMessage)
             }
           }
         }
@@ -290,7 +292,7 @@ abstract class UnPickler {
          * (.) ...
          * (1) `local child` represents local child classes, see comment in Pickler.putSymbol.
          *     Since it is not a member, it should not be entered in the owner's scope.
-         * (2) Similarly, we ignore local dummy symbols, as seen in SI-8868
+         * (2) Similarly, we ignore local dummy symbols, as seen in scala/bug#8868
          */
         def shouldEnterInOwnerScope = {
           sym.owner.isClass &&
@@ -377,7 +379,7 @@ abstract class UnPickler {
 
       def readThisType(): Type = {
         val sym = readSymbolRef() match {
-          case stub: StubSymbol => stub.setFlag(PACKAGE)
+          case stub: StubSymbol => stub.setFlag(PACKAGE | MODULE)
           case sym => sym
         }
         ThisType(sym)
@@ -385,12 +387,12 @@ abstract class UnPickler {
 
       // We're stuck with the order types are pickled in, but with judicious use
       // of named parameters we can recapture a declarative flavor in a few cases.
-      // But it's still a rat's nest of adhockery.
+      // But it's still a rat's nest of ad-hockery.
       (tag: @switch) match {
         case NOtpe                     => NoType
         case NOPREFIXtpe               => NoPrefix
         case THIStpe                   => readThisType()
-        case SINGLEtpe                 => SingleType(readTypeRef(), readSymbolRef().filter(_.isStable)) // SI-7596 account for overloading
+        case SINGLEtpe                 => SingleType(readTypeRef(), readSymbolRef().filter(_.isStable)) // scala/bug#7596 account for overloading
         case SUPERtpe                  => SuperType(readTypeRef(), readTypeRef())
         case CONSTANTtpe               => ConstantType(readConstantRef())
         case TYPEREFtpe                => TypeRef(readTypeRef(), readSymbolRef(), readTypes())
@@ -696,11 +698,18 @@ abstract class UnPickler {
       new TypeError(e.msg)
     }
 
+    /** Keep track of the symbols pending to be initialized.
+      *
+      * Useful for reporting on stub errors and cyclic errors.
+      */
+    private var completingStack = List.empty[Symbol]
+
     /** A lazy type which when completed returns type at index `i`. */
     private class LazyTypeRef(i: Int) extends LazyType with FlagAgnosticCompleter {
       private val definedAtRunId = currentRunId
       private val p = phase
       protected def completeInternal(sym: Symbol) : Unit = try {
+        completingStack = sym :: completingStack
         val tp = at(i, () => readType(sym.isTerm)) // after NMT_TRANSITION, revert `() => readType(sym.isTerm)` to `readType`
 
         // This is a temporary fix allowing to read classes generated by an older, buggy pickler.
@@ -723,7 +732,10 @@ abstract class UnPickler {
       }
       catch {
         case e: MissingRequirementError => throw toTypeError(e)
+      } finally {
+        completingStack = completingStack.tail
       }
+
       override def complete(sym: Symbol) : Unit = {
         completeInternal(sym)
         if (!isCompilerUniverse) markAllCompleted(sym)

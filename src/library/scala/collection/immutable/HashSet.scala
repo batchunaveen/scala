@@ -13,7 +13,6 @@ package collection
 package immutable
 
 import generic._
-import scala.collection.parallel.immutable.ParHashSet
 import scala.collection.GenSet
 import scala.annotation.tailrec
 
@@ -35,7 +34,6 @@ sealed class HashSet[A] extends AbstractSet[A]
                     with Set[A]
                     with GenericSetTemplate[A, HashSet]
                     with SetLike[A, HashSet[A]]
-                    with CustomParallelizable[A, ParHashSet[A]]
                     with Serializable
 {
   import HashSet.{nullToEmpty, bufferSize, LeafHashSet}
@@ -43,8 +41,6 @@ sealed class HashSet[A] extends AbstractSet[A]
   override def companion: GenericCompanion[HashSet] = HashSet
 
   //class HashSet[A] extends Set[A] with SetLike[A, HashSet[A]] {
-
-  override def par = ParHashSet.fromTrie(this)
 
   override def size: Int = 0
 
@@ -470,12 +466,12 @@ object HashSet extends ImmutableSetFactory[HashSet] {
       // hash codes and remove the collision. however this is never called
       // because no references to this class are ever handed out to client code
       // and HashTrieSet serialization takes care of the situation
-      sys.error("cannot serialize an immutable.HashSet where all items have the same 32-bit hash code")
+      throw new IllegalStateException("cannot serialize an immutable.HashSet where all items have the same 32-bit hash code")
       //out.writeObject(kvs)
     }
 
     private def readObject(in: java.io.ObjectInputStream) {
-      sys.error("cannot deserialize an immutable.HashSet where all items have the same 32-bit hash code")
+      throw new IllegalStateException("cannot deserialize an immutable.HashSet where all items have the same 32-bit hash code")
       //kvs = in.readObject().asInstanceOf[ListSet[A]]
       //hash = computeHash(kvs.)
     }
@@ -521,7 +517,7 @@ object HashSet extends ImmutableSetFactory[HashSet] {
   class HashTrieSet[A](private val bitmap: Int, private[collection] val elems: Array[HashSet[A]], private val size0: Int)
         extends HashSet[A] {
     assert(Integer.bitCount(bitmap) == elems.length)
-    // assertion has to remain disabled until SI-6197 is solved
+    // assertion has to remain disabled until scala/bug#6197 is solved
     // assert(elems.length > 1 || (elems.length == 1 && elems(0).isInstanceOf[HashTrieSet[_]]))
 
     override def size = size0

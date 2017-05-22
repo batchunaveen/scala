@@ -276,7 +276,7 @@ abstract class Erasure extends InfoTransform
               else "*"
             } else tp match {
               case PolyType(_, res) =>
-                "*" // SI-7932
+                "*" // scala/bug#7932
               case _ =>
                 boxedSig(tp)
             }
@@ -456,7 +456,15 @@ abstract class Erasure extends InfoTransform
   override def newTyper(context: Context) = new Eraser(context)
 
   class ComputeBridges(unit: CompilationUnit, root: Symbol) {
-    assert(phase == currentRun.erasurePhase, phase)
+
+    class BridgesCursor(root: Symbol) extends overridingPairs.Cursor(root) {
+      override def parents              = List(root.info.firstParent)
+      // Varargs bridges may need generic bridges due to the non-repeated part of the signature of the involved methods.
+      // The vararg bridge is generated during refchecks (probably to simplify override checking),
+      // but then the resulting varargs "bridge" method may itself need an actual erasure bridge.
+      // TODO: like javac, generate just one bridge method that wraps Seq <-> varargs and does erasure-induced casts
+      override def exclude(sym: Symbol) = !sym.isMethod || super.exclude(sym)
+    }
 
     var toBeRemoved  = immutable.Set[Symbol]()
     val site         = root.thisType
@@ -464,12 +472,7 @@ abstract class Erasure extends InfoTransform
     val bridgeTarget = mutable.HashMap[Symbol, Symbol]()
     var bridges      = List[Tree]()
 
-    val opc = enteringExplicitOuter {
-      new overridingPairs.Cursor(root) {
-        override def parents              = List(root.info.firstParent)
-        override def exclude(sym: Symbol) = !sym.isMethod || super.exclude(sym)
-      }
-    }
+    val opc = enteringExplicitOuter { new BridgesCursor(root) }
 
     def compute(): (List[Tree], immutable.Set[Symbol]) = {
       while (opc.hasNext) {
@@ -833,7 +836,7 @@ abstract class Erasure extends InfoTransform
     private def checkNoDeclaredDoubleDefs(base: Symbol) {
       val decls = base.info.decls
 
-      // SI-8010 force infos, otherwise makeNotPrivate in ExplicitOuter info transformer can trigger
+      // scala/bug#8010 force infos, otherwise makeNotPrivate in ExplicitOuter info transformer can trigger
       //         a scope rehash while were iterating and we can see the same entry twice!
       //         Inspection of SymbolPairs (the basis of OverridingPairs), suggests that it is immune
       //         from this sort of bug as it copies the symbols into a temporary scope *before* any calls to `.info`,
@@ -849,7 +852,7 @@ abstract class Erasure extends InfoTransform
         if (e.sym.isTerm) {
           var e1 = decls lookupNextEntry e
           while (e1 ne null) {
-            assert(e.sym ne e1.sym, s"Internal error: encountered ${e.sym.debugLocationString} twice during scope traversal. This might be related to SI-8010.")
+            assert(e.sym ne e1.sym, s"Internal error: encountered ${e.sym.debugLocationString} twice during scope traversal. This might be related to scala/bug#8010.")
             if (sameTypeAfterErasure(e.sym, e1.sym))
               doubleDefError(new SymbolPair(base, e.sym, e1.sym))
 
@@ -858,6 +861,16 @@ abstract class Erasure extends InfoTransform
         }
         e = e.next
       }
+    }
+
+    private class DoubleDefsCursor(root: Symbol) extends Cursor(root) {
+      // specialized members have no type history before 'specialize', causing double def errors for curried defs
+      override def exclude(sym: Symbol): Boolean = (
+           sym.isType
+        || super.exclude(sym)
+        || !sym.hasTypeAt(currentRun.refchecksPhase.id)
+      )
+      override def matches(high: Symbol) = !high.isPrivate
     }
 
     /** Emit an error if there is a double definition. This can happen if:
@@ -870,21 +883,12 @@ abstract class Erasure extends InfoTransform
      */
     private def checkNoDoubleDefs(root: Symbol) {
       checkNoDeclaredDoubleDefs(root)
-      object opc extends Cursor(root) {
-        // specialized members have no type history before 'specialize', causing double def errors for curried defs
-        override def exclude(sym: Symbol): Boolean = (
-             sym.isType
-          || super.exclude(sym)
-          || !sym.hasTypeAt(currentRun.refchecksPhase.id)
-        )
-        override def matches(lo: Symbol, high: Symbol) = !high.isPrivate
-      }
       def isErasureDoubleDef(pair: SymbolPair) = {
         import pair._
         log(s"Considering for erasure clash:\n$pair")
         !exitingRefchecks(lowType matches highType) && sameTypeAfterErasure(low, high)
       }
-      opc.iterator filter isErasureDoubleDef foreach doubleDefError
+      (new DoubleDefsCursor(root)).iterator filter isErasureDoubleDef foreach doubleDefError
     }
 
     /**  Add bridge definitions to a template. This means:
@@ -1090,7 +1094,7 @@ abstract class Erasure extends InfoTransform
                 //    of the refinement is a primitive and another is AnyRef. In that case
                 //    we get a primitive form of _getClass trying to target a boxed value
                 //    so we need replace that method name with Object_getClass to get correct behavior.
-                //    See SI-5568.
+                //    See scala/bug#5568.
                 tree setSymbol Object_getClass
               } else {
                 devWarning(s"The symbol '${fn.symbol}' was intercepted but didn't match any cases, that means the intercepted methods set doesn't match the code")
@@ -1142,7 +1146,7 @@ abstract class Erasure extends InfoTransform
           if (!isJvmAccessible(owner) && qual.tpe != null) {
             qual match {
               case Super(_, _) =>
-                // Insert a cast here at your peril -- see SI-5162.
+                // Insert a cast here at your peril -- see scala/bug#5162.
                 reporter.error(tree.pos, s"Unable to access ${tree.symbol.fullLocationString} with a super reference.")
                 tree
               case _ =>
@@ -1196,7 +1200,7 @@ abstract class Erasure extends InfoTransform
           val tree1 = preErase(tree)
           tree1 match {
             case TypeApply(fun, targs @ List(targ)) if (fun.symbol == Any_asInstanceOf  || fun.symbol == Object_synchronized) && targ.tpe == UnitTpe =>
-              // SI-9066 prevent transforming `o.asInstanceOf[Unit]` to `o.asInstanceOf[BoxedUnit]`.
+              // scala/bug#9066 prevent transforming `o.asInstanceOf[Unit]` to `o.asInstanceOf[BoxedUnit]`.
               // adaptMember will then replace the call by a reference to BoxedUnit.UNIT.
               treeCopy.TypeApply(tree1, transform(fun), targs).clearType()
             case EmptyTree | TypeTree() =>

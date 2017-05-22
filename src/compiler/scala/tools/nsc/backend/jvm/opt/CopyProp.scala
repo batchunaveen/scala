@@ -85,7 +85,7 @@ class CopyProp[BT <: BTypes](val btypes: BT) {
    * eliminated, it is replaced by a POP. The [[eliminatePushPop]] cleans up unnecessary POPs.
    *
    * Note that an `ASOTRE` can not always be eliminated: it removes a reference to the object that
-   * is currently stored in that local, which potentially frees it for GC (SI-5313). Therefore
+   * is currently stored in that local, which potentially frees it for GC (scala/bug#5313). Therefore
    * we replace such stores by `POP; ACONST_NULL; ASTORE x`.
    */
   def eliminateStaleStores(method: MethodNode, owner: InternalName): Boolean = {
@@ -273,7 +273,7 @@ class CopyProp[BT <: BTypes](val btypes: BT) {
       }
 
       /**
-       * Eliminate the `numArgs` inputs of the instruction `prod` (which was eliminated). Fo
+       * Eliminate the `numArgs` inputs of the instruction `prod` (which was eliminated). For
        * each input value
        *   - if the `prod` instruction is the single consumer, enqueue the producers of the input
        *   - otherwise, insert a POP instruction to POP the input value
@@ -465,7 +465,7 @@ class CopyProp[BT <: BTypes](val btypes: BT) {
   }
 
   /**
-   * Remove `xSTORE n; xLOAD n` paris if
+   * Remove `xSTORE n; xLOAD n` pairs if
    *   - the local variable n is not used anywhere else in the method (1), and
    *   - there are no executable instructions and no live labels (jump targets) between the two (2)
    *
@@ -474,7 +474,7 @@ class CopyProp[BT <: BTypes](val btypes: BT) {
    *
    * (1) This could be made more precise by running a prodCons analysis and checking that the load
    * is the only user of the store. Then we could eliminate the pair even if the variable is live
-   * (except for ASTORE, SI-5313). Not needing an analyzer is more efficient, and catches most
+   * (except for ASTORE, scala/bug#5313). Not needing an analyzer is more efficient, and catches most
    * cases.
    *
    * (2) The implementation uses a conservative estimation for liveness (if some instruction uses

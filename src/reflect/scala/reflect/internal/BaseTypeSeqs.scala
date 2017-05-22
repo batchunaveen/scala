@@ -33,6 +33,9 @@ trait BaseTypeSeqs {
   protected def newBaseTypeSeq(parents: List[Type], elems: Array[Type]) =
     new BaseTypeSeq(parents, elems)
 
+  protected def newMappedBaseTypeSeq(orig: BaseTypeSeq, f: Type => Type) =
+    new MappedBaseTypeSeq(orig, f)
+
   /** Note: constructor is protected to force everyone to use the factory method newBaseTypeSeq instead.
    *  This is necessary because when run from reflection every base type sequence needs to have a
    *  SynchronizedBaseTypeSeq as mixin.
@@ -41,6 +44,15 @@ trait BaseTypeSeqs {
   self =>
     if (Statistics.canEnable) Statistics.incCounter(baseTypeSeqCount)
     if (Statistics.canEnable) Statistics.incCounter(baseTypeSeqLenTotal, elems.length)
+    private[this] val typeSymbols = {
+      val tmp = new Array[Int](elems.length)
+      var i = 0
+      while (i < elems.length) {
+        tmp(i) = elems(i).typeSymbol.id
+        i += 1
+      }
+      tmp
+    }
 
     /** The number of types in the sequence */
     def length: Int = elems.length
@@ -95,6 +107,17 @@ trait BaseTypeSeqs {
     /** The type symbol of the type at i'th position in this sequence */
     def typeSymbol(i: Int): Symbol = elems(i).typeSymbol
 
+    final def baseTypeIndex(sym: Symbol): Int = {
+      val symId = sym.id
+      var i = 0
+      val len = length
+      while (i < len) {
+        if (typeSymbols(i) == symId) return i
+        i += 1
+      }
+      -1
+    }
+
     /** Return all evaluated types in this sequence as a list */
     def toList: List[Type] = elems.toList
 
@@ -125,7 +148,7 @@ trait BaseTypeSeqs {
       newBaseTypeSeq(parents, arr)
     }
 
-    def lateMap(f: Type => Type): BaseTypeSeq = new MappedBaseTypeSeq(this, f)
+    def lateMap(f: Type => Type): BaseTypeSeq = newMappedBaseTypeSeq(this, f)
 
     def exists(p: Type => Boolean): Boolean = elems exists p
 
@@ -167,7 +190,7 @@ trait BaseTypeSeqs {
       val index = new Array[Int](nparents)
       var i = 0
       for (p <- parents) {
-        val parentBts = p.dealias.baseTypeSeq // dealias need for SI-8046.
+        val parentBts = p.dealias.baseTypeSeq // dealias need for scala/bug#8046.
         pbtss(i) =
           if (parentBts eq undetBaseTypeSeq) AnyClass.info.baseTypeSeq
           else parentBts
@@ -230,7 +253,6 @@ trait BaseTypeSeqs {
   class MappedBaseTypeSeq(orig: BaseTypeSeq, f: Type => Type) extends BaseTypeSeq(orig.parents map f, orig.elems) {
     override def apply(i: Int) = f(orig.apply(i))
     override def rawElem(i: Int) = f(orig.rawElem(i))
-    override def typeSymbol(i: Int) = orig.typeSymbol(i)
     override def toList = orig.toList map f
     override def copy(head: Type, offset: Int) = (orig map f).copy(head, offset)
     override def map(g: Type => Type) = lateMap(g)

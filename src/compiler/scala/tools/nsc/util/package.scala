@@ -39,9 +39,16 @@ package object util {
    *  which were created during its execution.
    */
   def trackingThreads[T](body: => T): (T, Seq[Thread]) = {
-    val ts1    = sys.allThreads()
+    def allThreads(): IndexedSeq[Thread] = {
+      val tarray = new Array[Thread](Thread.activeCount())
+      val got    = Thread.enumerate(tarray)
+
+      tarray take got
+    }
+
+    val ts1    = allThreads()
     val result = body
-    val ts2    = sys.allThreads()
+    val ts2    = allThreads()
 
     (result, ts2 filterNot (ts1 contains _))
   }
@@ -89,7 +96,7 @@ package object util {
   implicit class StackTraceOps(private val e: Throwable) extends AnyVal with StackTracing {
     /** Format the stack trace, returning the prefix consisting of frames that satisfy
      *  a given predicate.
-     *  The format is similar to the typical case described in the JavaDoc
+     *  The format is similar to the typical case described in the Javadoc
      *  for [[java.lang.Throwable#printStackTrace]].
      *  If a stack trace is truncated, it will be followed by a line of the form
      *  `... 3 elided`, by analogy to the lines `... 3 more` which indicate

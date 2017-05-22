@@ -1,9 +1,11 @@
+package scala.build
+
 // It would be nice to use sbt-mima-plugin here, but the plugin is missing
 // at least two features we need:
 // * ability to run MiMa twice, swapping `curr` and `prev`, to detect
 //   both forwards and backwards incompatibilities (possibly fixed as of
 //   https://github.com/typesafehub/migration-manager/commit/2844ffa48b6d2255aa64bd687703aec21dadd55e)
-// * ability to pass a filter file (https://github.com/typesafehub/migration-manager/issues/102)
+// * ability to pass a filter file (https://github.com/typesafehub/migration-manager/issues/170)
 // So we invoke the MiMa CLI directly.
 
 import sbt._
@@ -49,7 +51,7 @@ object MiMa {
       "--curr", curr.getAbsolutePath,
       "--filters", filter.getAbsolutePath,
       "--generate-filters",
-      // !!! Command line MiMa (which we call rathan the sbt Plugin for reasons alluded to in f2d0f1e85) incorrectly
+      // !!! Command line MiMa (which we call rather than the sbt Plugin for reasons alluded to in f2d0f1e85) incorrectly
       //     defaults to no checking (!) if this isn't specified. Fixed in https://github.com/typesafehub/migration-manager/pull/138
       //     TODO: Try out the new "--direction both" mode of MiMa
       "--direction", "backwards"
@@ -79,7 +81,7 @@ object MiMa {
 
 }
 
-// use the SI-7934 workaround to silence a deprecation warning on an sbt API
+// use the scala/bug#7934 workaround to silence a deprecation warning on an sbt API
 // we have no choice but to call.  on the lack of any suitable alternative,
 // see https://gitter.im/sbt/sbt-dev?at=5616e2681b0e279854bd74a4 :
 // "it's my intention to eventually come up with a public API" says Eugene Y

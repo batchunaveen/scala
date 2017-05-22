@@ -21,7 +21,7 @@ import scala.tools.nsc.classpath._
 object PathResolver {
   // Imports property/environment functions which suppress security exceptions.
   import AccessControl._
-  import scala.compat.Platform.EOL
+  import java.lang.System.{lineSeparator => EOL}
 
   implicit class MkLines(val t: TraversableOnce[_]) extends AnyVal {
     def mkLines: String = t.mkString("", EOL, EOL)
@@ -47,8 +47,10 @@ object PathResolver {
   /** Values found solely by inspecting environment or property variables.
    */
   object Environment {
+    import scala.collection.JavaConverters._
+
     private def searchForBootClasspath =
-      systemProperties collectFirst { case (k, v) if k endsWith ".boot.class.path" => v } getOrElse ""
+      System.getProperties.asScala collectFirst { case (k, v) if k endsWith ".boot.class.path" => v } getOrElse ""
 
     /** Environment variables which java pays attention to so it
      *  seems we do as well.
@@ -234,7 +236,7 @@ final class PathResolver(settings: Settings) {
 
     // Assemble the elements!
     def basis = List[Traversable[ClassPath]](
-      JImageDirectoryLookup.apply(),                // 0. The Java 9 classpath (backed by the jrt:/ virtual system)
+      JrtClassPath.apply(),                         // 0. The Java 9 classpath (backed by the jrt:/ virtual system, if available)
       classesInPath(javaBootClassPath),             // 1. The Java bootstrap class path.
       contentsOfDirsInPath(javaExtDirs),            // 2. The Java extension class path.
       classesInExpandedPath(javaUserClassPath),     // 3. The Java application class path.

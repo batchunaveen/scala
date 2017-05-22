@@ -152,7 +152,7 @@ abstract class Delambdafy extends Transform with TypingTransformers with ast.Tre
       val resTpOk = (
            samResultType =:= UnitTpe
         || functionResultType =:= samResultType
-        || (isReferenceType(samResultType) && isReferenceType(functionResultType))) // yes, this is what the spec says -- no further correspondance required
+        || (isReferenceType(samResultType) && isReferenceType(functionResultType))) // yes, this is what the spec says -- no further correspondence required
       if (resTpOk && (samParamTypes corresponds functionParamTypes){ (samParamTp, funParamTp) =>
           funParamTp =:= samParamTp || (isReferenceType(funParamTp) && isReferenceType(samParamTp) && funParamTp <:< samParamTp) }) target
       else {
@@ -165,7 +165,7 @@ abstract class Delambdafy extends Transform with TypingTransformers with ast.Tre
         // whenever a type in the sam's signature is (erases to) a primitive type, we must pick the sam's version,
         // as we don't implement the logic regarding widening that's performed by LMF -- we require =:= for primitives
         //
-        // We use the sam's type for the check whether we're dealin with a reference type, as it could be a generic type,
+        // We use the sam's type for the check whether we're dealing with a reference type, as it could be a generic type,
         // which means the function's parameter -- even if it expects a value class -- will need to be
         // boxed on the generic call to the sam method.
 
@@ -280,7 +280,7 @@ abstract class Delambdafy extends Transform with TypingTransformers with ast.Tre
           Template(parents, self, body ++ boxingBridgeMethods)
         } finally boxingBridgeMethods.clear()
       case dd: DefDef if dd.symbol.isLiftedMethod && !dd.symbol.isDelambdafyTarget =>
-        // SI-9390 emit lifted methods that don't require a `this` reference as STATIC
+        // scala/bug#9390 emit lifted methods that don't require a `this` reference as STATIC
         // delambdafy targets are excluded as they are made static by `transformFunction`.
         if (!dd.symbol.hasFlag(STATIC) && !methodReferencesThis(dd.symbol)) {
           dd.symbol.setFlag(STATIC)
@@ -347,7 +347,7 @@ abstract class Delambdafy extends Transform with TypingTransformers with ast.Tre
     // recursively find methods that refer to 'this' directly or indirectly via references to other methods
     // for each method found add it to the referrers set
     private def refersToThis(symbol: Symbol): Boolean = {
-      var seen = mutable.Set[Symbol]()
+      val seen = mutable.Set[Symbol]()
       def loop(symbol: Symbol): Boolean = {
         if (seen(symbol)) false
         else {

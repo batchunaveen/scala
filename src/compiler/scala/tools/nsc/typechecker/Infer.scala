@@ -141,7 +141,7 @@ trait Infer extends Checkable {
       // The historical commentary says "no panic, it's good enough to just guess a solution,
       // we'll find out later whether it works", meaning don't issue an error here when types
       // don't conform to bounds. That means you can never trust the results of implicit search.
-      // For an example where this was not being heeded, SI-2421.
+      // For an example where this was not being heeded, scala/bug#2421.
       solve(tvars, tparams, variances, upper, depth)
       tvars map instantiate
     }
@@ -182,7 +182,7 @@ trait Infer extends Checkable {
 
     /* -- Error Messages --------------------------------------------------- */
     def setError[T <: Tree](tree: T): T = {
-      // SI-7388, one can incur a cycle calling sym.toString
+      // scala/bug#7388, one can incur a cycle calling sym.toString
       // (but it'd be nicer if that weren't so)
       def name = {
         val sym = tree.symbol
@@ -289,7 +289,7 @@ trait Infer extends Checkable {
      *  For this behavior, the type `pt` must have cbn params preserved; for instance, `formalTypes(removeByName = false)`.
      *
      *  `isAsSpecific` no longer prefers A by testing applicability to A for both m(A) and m(=>A)
-     *  since that induces a tie between m(=>A) and m(=>A,B*) [SI-3761]
+     *  since that induces a tie between m(=>A) and m(=>A,B*) [scala/bug#3761]
      */
     private def isCompatible(tp: Type, pt: Type): Boolean = {
       def isCompatibleByName(tp: Type, pt: Type): Boolean = (
@@ -495,21 +495,22 @@ trait Infer extends Checkable {
     }
 
     /** Return inferred type arguments, given type parameters, formal parameters,
-    *  argument types, result type and expected result type.
-    *  If this is not possible, throw a `NoInstance` exception.
-    *  Undetermined type arguments are represented by `definitions.NothingTpe`.
-    *  No check that inferred parameters conform to their bounds is made here.
-    *
-    *  @param   tparams         the type parameters of the method
-    *  @param   formals         the value parameter types of the method
-    *  @param   restpe          the result type of the method
-    *  @param   argtpes         the argument types of the application
-    *  @param   pt              the expected return type of the application
-    *  @return  @see adjustTypeArgs
-    *
-    *  @throws                  NoInstance
-    */
-    def methTypeArgs(tparams: List[Symbol], formals: List[Type], restpe: Type,
+     *  argument types, result type and expected result type.
+     *  If this is not possible, throw a `NoInstance` exception.
+     *  Undetermined type arguments are represented by `definitions.NothingTpe`.
+     *  No check that inferred parameters conform to their bounds is made here.
+     *
+     *  @param   fn              the function for reporting, may be empty
+     *  @param   tparams         the type parameters of the method
+     *  @param   formals         the value parameter types of the method
+     *  @param   restpe          the result type of the method
+     *  @param   argtpes         the argument types of the application
+     *  @param   pt              the expected return type of the application
+     *  @return  @see adjustTypeArgs
+     *
+     *  @throws                  NoInstance
+     */
+    def methTypeArgs(fn: Tree, tparams: List[Symbol], formals: List[Type], restpe: Type,
                      argtpes: List[Type], pt: Type): AdjustedTypeArgs.Result = {
       val tvars = tparams map freshVar
       if (!sameLength(formals, argtpes))
@@ -559,21 +560,12 @@ trait Infer extends Checkable {
         val hasAny = pt :: restpe :: formals ::: argtpes ::: loBounds exists (_.dealiasWidenChain exists containsAny)
         !hasAny
       }
-      def argumentPosition(idx: Int): Position = context.tree match {
-        case x: ValOrDefDef => x.rhs match {
-          case Apply(fn, args) if idx < args.size => args(idx).pos
-          case _                                  => context.tree.pos
-        }
-        case _ => context.tree.pos
-      }
-      if (settings.warnInferAny && context.reportErrors && canWarnAboutAny) {
-        foreachWithIndex(targs) ((targ, idx) =>
-          targ.typeSymbol match {
-            case sym @ (AnyClass | AnyValClass) =>
-              reporter.warning(argumentPosition(idx), s"a type was inferred to be `${sym.name}`; this may indicate a programming error.")
-            case _ =>
-          }
-        )
+      if (settings.warnInferAny && context.reportErrors && !fn.isEmpty && canWarnAboutAny) {
+        targs.foreach(_.typeSymbol match {
+          case sym @ (AnyClass | AnyValClass) =>
+            reporter.warning(fn.pos, s"a type was inferred to be `${sym.name}`; this may indicate a programming error.")
+          case _ =>
+        })
       }
       adjustTypeArgs(tparams, tvars, targs, restpe)
     }
@@ -607,7 +599,7 @@ trait Infer extends Checkable {
         def notUsingDefaults = varargsTarget || paramsCount <= argsCount
 
         // A varargs star call, e.g. (x, y:_*) can only match a varargs method
-        // with the same number of parameters.  See SI-5859 for an example of what
+        // with the same number of parameters.  See scala/bug#5859 for an example of what
         // would fail were this not enforced before we arrived at isApplicable.
         if (varargsStar)
           varargsTarget && simpleMatch
@@ -616,7 +608,7 @@ trait Infer extends Checkable {
     }
 
     private[typechecker] def followApply(tp: Type): Type = tp match {
-      case _ if tp.isError => tp // SI-8228, `ErrorType nonPrivateMember nme.apply` returns an member with an erroneous type!
+      case _ if tp.isError => tp // scala/bug#8228, `ErrorType nonPrivateMember nme.apply` returns an member with an erroneous type!
       case NullaryMethodType(restp) =>
         val restp1 = followApply(restp)
         if (restp1 eq restp) tp else restp1
@@ -680,7 +672,7 @@ trait Infer extends Checkable {
      */
     def eligibleForTupleConversion(paramsCount: Int, argsCount: Int, varargsTarget: Boolean): Boolean = {
       def canSendTuple = argsCount match {
-        case 0 => !varargsTarget        // avoid () to (()) conversion - SI-3224
+        case 0 => !varargsTarget        // avoid () to (()) conversion - scala/bug#3224
         case 1 => false                 // can't tuple a single argument
         case n => n <= MaxTupleArity    // <= 22 arguments
       }
@@ -735,7 +727,7 @@ trait Infer extends Checkable {
       )
       def tryInstantiating(args: List[Type]) = falseIfNoInstance {
         val restpe = mt resultType args
-        val AdjustedTypeArgs.Undets(okparams, okargs, leftUndet) = methTypeArgs(undetparams, formals, restpe, args, pt)
+        val AdjustedTypeArgs.Undets(okparams, okargs, leftUndet) = methTypeArgs(EmptyTree, undetparams, formals, restpe, args, pt)
         val restpeInst = restpe.instantiateTypeParams(okparams, okargs)
         // #2665: must use weak conformance, not regular one (follow the monomorphic case above)
         exprTypeArgs(leftUndet, restpeInst, pt, useWeaklyCompatible = true) match {
@@ -936,7 +928,7 @@ trait Infer extends Checkable {
       def infer_s = map3(tparams, tvars, targs)((tparam, tvar, targ) => s"$tparam=$tvar/$targ") mkString ","
       printTyping(tree, s"infer expr instance from pt=$pt, $infer_s")
 
-      // SI-7899 inferring by-name types is unsound
+      // scala/bug#7899 inferring by-name types is unsound
       def targsStrict = if (targs eq null) null else targs mapConserve dropByName
 
       if (keepNothings || (targs eq null)) { //@M: adjustTypeArgs fails if targs==null, neg/t0226
@@ -989,7 +981,7 @@ trait Infer extends Checkable {
           val restpe  = fn.tpe.resultType(argtpes)
 
           val AdjustedTypeArgs.AllArgsAndUndets(okparams, okargs, allargs, leftUndet) =
-            methTypeArgs(undetparams, formals, restpe, argtpes, pt)
+            methTypeArgs(fn, undetparams, formals, restpe, argtpes, pt)
 
           if (checkBounds(fn, NoPrefix, NoSymbol, undetparams, allargs, "inferred ")) {
             val treeSubst = new TreeTypeSubstituter(okparams, okargs)
@@ -1251,7 +1243,7 @@ trait Infer extends Checkable {
       // situation, the behavior of which depends on the state at the
       // time the typevar is created. Until we can deal with these
       // properly, we can avoid it by ignoring type parameters which
-      // have type constructors amongst their bounds. See SI-4070.
+      // have type constructors amongst their bounds. See scala/bug#4070.
       def isFreeTypeParamOfTerm(sym: Symbol) = (
         sym.isAbstractType
           && sym.owner.isTerm
@@ -1294,7 +1286,7 @@ trait Infer extends Checkable {
           bests match {
             case best :: Nil                              => tree setSymbol best setType (pre memberType best)
             case best :: competing :: _ if alts0.nonEmpty =>
-              // SI-6912 Don't give up and leave an OverloadedType on the tree.
+              // scala/bug#6912 Don't give up and leave an OverloadedType on the tree.
               //         Originally I wrote this as `if (secondTry) ... `, but `tryTwice` won't attempt the second try
               //         unless an error is issued. We're not issuing an error, in the assumption that it would be
               //         spurious in light of the erroneous expected type
@@ -1337,7 +1329,7 @@ trait Infer extends Checkable {
      *  @param  varargsStar  true if the call site has a `: _*` attached to the last argument
      */
     private def overloadsToConsiderBySpecificity(eligible: List[Symbol], argtpes: List[Type], varargsStar: Boolean): List[Symbol] = {
-      // TODO spec: this namesMatch business is not spec'ed, and is the wrong fix for SI-4592
+      // TODO spec: this namesMatch business is not spec'ed, and is the wrong fix for scala/bug#4592
       // we should instead clarify what the spec means by "typing each argument with an undefined expected type".
       // What does typing a named argument entail when we don't know what the valid parameter names are?
       // (Since we're doing overload resolution, there are multiple alternatives that can define different names.)

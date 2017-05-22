@@ -446,9 +446,10 @@ abstract class ScalaPrimitives {
       inform(s"Unknown primitive method $cls.$method")
     else alts foreach (s =>
       addPrimitive(s,
-        s.info.paramTypes match {
-          case tp :: _ if code == ADD && tp =:= StringTpe => CONCAT
-          case _                                          => code
+        if (code != ADD) code
+        else exitingTyper(s.info).paramTypes match {
+          case tp :: _ if tp =:= StringTpe => CONCAT
+          case _                           => code
         }
       )
     )
@@ -546,7 +547,7 @@ abstract class ScalaPrimitives {
       val arrayParent = tpe :: tpe.parents collectFirst {
         case TypeRef(_, ArrayClass, elem :: Nil) => elem
       }
-      arrayParent getOrElse sys.error(fun.fullName + " : " + (tpe :: tpe.baseTypeSeq.toList).mkString(", "))
+      arrayParent getOrElse abort(fun.fullName + " : " + (tpe :: tpe.baseTypeSeq.toList).mkString(", "))
     }
 
     code match {

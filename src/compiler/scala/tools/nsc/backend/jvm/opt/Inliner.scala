@@ -15,7 +15,6 @@ import scala.collection.JavaConverters._
 import AsmUtils._
 import BytecodeUtils._
 import collection.mutable
-import scala.tools.asm.tree.analysis.{Analyzer, SourceInterpreter}
 import BackendReporting._
 import scala.tools.nsc.backend.jvm.BTypes.InternalName
 
@@ -634,7 +633,7 @@ class Inliner[BT <: BTypes](val btypes: BT) {
 
     // When an exception is thrown, the stack is cleared before jumping to the handler. When
     // inlining a method that catches an exception, all values that were on the stack before the
-    // call (in addition to the arguments) would be cleared (SI-6157). So we don't inline methods
+    // call (in addition to the arguments) would be cleared (scala/bug#6157). So we don't inline methods
     // with handlers in case there are values on the stack.
     // Alternatively, we could save all stack values below the method arguments into locals, but
     // that would be inefficient: we'd need to pop all parameters, save the values, and push the
@@ -683,7 +682,7 @@ class Inliner[BT <: BTypes](val btypes: BT) {
    *  (A2) C and D are members of the same run-time package
    */
   def classIsAccessible(accessed: BType, from: ClassBType): Either[OptimizerWarning, Boolean] = (accessed: @unchecked) match {
-    // TODO: A2 requires "same run-time package", which seems to be package + classloader (JMVS 5.3.). is the below ok?
+    // TODO: A2 requires "same run-time package", which seems to be package + classloader (JVMS 5.3.). is the below ok?
     case c: ClassBType     => c.isPublic.map(_ || c.packageInternalName == from.packageInternalName)
     case a: ArrayBType     => classIsAccessible(a.elementType, from)
     case _: PrimitiveBType => Right(true)
@@ -725,7 +724,7 @@ class Inliner[BT <: BTypes](val btypes: BT) {
    * type from there (https://github.com/scala-opt/scala/issues/13).
    */
   def memberIsAccessible(memberFlags: Int, memberDeclClass: ClassBType, memberRefClass: ClassBType, from: ClassBType): Either[OptimizerWarning, Boolean] = {
-    // TODO: B3 requires "same run-time package", which seems to be package + classloader (JMVS 5.3.). is the below ok?
+    // TODO: B3 requires "same run-time package", which seems to be package + classloader (JVMS 5.3.). is the below ok?
     def samePackageAsDestination = memberDeclClass.packageInternalName == from.packageInternalName
     def targetObjectConformsToDestinationClass = false // needs type propagation analysis, see above
 

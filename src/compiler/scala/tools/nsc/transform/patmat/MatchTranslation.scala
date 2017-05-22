@@ -109,25 +109,29 @@ trait MatchTranslation {
 
       // example check: List[Int] <:< ::[Int]
       private def extractorStep(): TranslationStep = {
-        def paramType = extractor.aligner.wholeType
         import extractor.treeMaker
-        // chain a type-testing extractor before the actual extractor call
-        // it tests the type, checks the outer pointer and casts to the expected type
-        // TODO: the outer check is mandated by the spec for case classes, but we do it for user-defined unapplies as well [SPEC]
-        // (the prefix of the argument passed to the unapply must equal the prefix of the type of the binder)
-        lazy val typeTest = TypeTestTreeMaker(binder, binder, paramType, paramType)(pos, extractorArgTypeTest = true)
-        // check whether typetest implies binder is not null,
-        // even though the eventual null check will be on typeTest.nextBinder
-        // it'll be equal to binder casted to paramType anyway (and the type test is on binder)
-        def extraction: TreeMaker = treeMaker(typeTest.nextBinder, typeTest impliesBinderNonNull binder, pos)
 
         // paramType = the type expected by the unapply
         // TODO: paramType may contain unbound type params (run/t2800, run/t3530)
-        val makers = (
+        val makers = {
+          val paramType = extractor.aligner.wholeType
           // Statically conforms to paramType
           if (tpe <:< paramType) treeMaker(binder, false, pos) :: Nil
-          else typeTest :: extraction :: Nil
-        )
+          else {
+            // chain a type-testing extractor before the actual extractor call
+            // it tests the type, checks the outer pointer and casts to the expected type
+            // TODO: the outer check is mandated by the spec for case classes, but we do it for user-defined unapplies as well [SPEC]
+            // (the prefix of the argument passed to the unapply must equal the prefix of the type of the binder)
+            val typeTest = TypeTestTreeMaker(binder, binder, paramType, paramType)(pos, extractorArgTypeTest = true)
+            val binderKnownNonNull = typeTest impliesBinderNonNull binder
+
+            // check whether typetest implies binder is not null,
+            // even though the eventual null check will be on typeTest.nextBinder
+            // it'll be equal to binder casted to paramType anyway (and the type test is on binder)
+            typeTest :: treeMaker(typeTest.nextBinder, binderKnownNonNull, pos) :: Nil
+          }
+        }
+
         step(makers: _*)(extractor.subBoundTrees: _*)
       }
 
@@ -237,7 +241,7 @@ trait MatchTranslation {
       if (caseDefs forall treeInfo.isCatchCase) caseDefs
       else {
         val swatches = { // switch-catches
-          // SI-7459 must duplicate here as we haven't committed to switch emission, and just figuring out
+          // scala/bug#7459 must duplicate here as we haven't committed to switch emission, and just figuring out
           //         if we can ends up mutating `caseDefs` down in the use of `substituteSymbols` in
           //         `TypedSubstitution#Substitution`. That is called indirectly by `emitTypeSwitch`.
           val bindersAndCases = caseDefs.map(_.duplicate) map { caseDef =>
@@ -348,7 +352,7 @@ trait MatchTranslation {
     /* A pattern binder x@p consists of a pattern variable x and a pattern p.
        The type of the variable x is the static type T of the pattern p.
        This pattern matches any value v matched by the pattern p,
-       provided the run-time type of v is also an instance of T,  <-- TODO! https://issues.scala-lang.org/browse/SI-1503
+       provided the run-time type of v is also an instance of T,  <-- TODO! https://github.com/scala/bug/issues/1503
        and it binds the variable name to that value.
     */
 
@@ -494,7 +498,7 @@ trait MatchTranslation {
         val paramAccessors = aligner.wholeType.typeSymbol.constrParamAccessors
         val numParams = paramAccessors.length
         def paramAccessorAt(subPatIndex: Int) = paramAccessors(math.min(subPatIndex, numParams - 1))
-        // binders corresponding to mutable fields should be stored (SI-5158, SI-6070)
+        // binders corresponding to mutable fields should be stored (scala/bug#5158, scala/bug#6070)
         // make an exception for classes under the scala package as they should be well-behaved,
         // to optimize matching on List
         val hasRepeated = paramAccessors.lastOption match {
@@ -583,7 +587,7 @@ trait MatchTranslation {
             // duplicated with the extractor Unapplied
             case Apply(x, List(i @ Ident(nme.SELECTOR_DUMMY))) =>
               treeCopy.Apply(t, x, binderRef(i.pos) :: Nil)
-            // SI-7868 Account for numeric widening, e.g. <unapplySelector>.toInt
+            // scala/bug#7868 Account for numeric widening, e.g. <unapplySelector>.toInt
             case Apply(x, List(i @ (sel @ Select(Ident(nme.SELECTOR_DUMMY), name)))) =>
               treeCopy.Apply(t, x, treeCopy.Select(sel, binderRef(i.pos), name) :: Nil)
             case _ =>

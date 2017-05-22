@@ -10,6 +10,8 @@ package scala
 package collection
 package mutable
 
+import java.util.ConcurrentModificationException
+
 /**
  *  @define Coll `OpenHashMap`
  *  @define coll open hash map
@@ -31,8 +33,6 @@ object OpenHashMap {
   final private class OpenEntry[Key, Value](var key: Key,
                                             var hash: Int,
                                             var value: Option[Value])
-
-  private[mutable] def nextPositivePowerOfTwo(i : Int) = 1 << (32 - Integer.numberOfLeadingZeros(i - 1))
 }
 
 /** A mutable hash map based on an open hashing scheme. The precise scheme is
@@ -67,7 +67,7 @@ extends AbstractMap[Key, Value]
 
   override def empty: OpenHashMap[Key, Value] = OpenHashMap.empty[Key, Value]
 
-  private[this] val actualInitialSize = OpenHashMap.nextPositivePowerOfTwo(initialSize)
+  private[this] val actualInitialSize = HashTable.nextPositivePowerOfTwo(initialSize)
 
   private var mask = actualInitialSize - 1
 
@@ -221,7 +221,7 @@ extends AbstractMap[Key, Value]
     val initialModCount = modCount
 
     private[this] def advance() {
-      if (initialModCount != modCount) sys.error("Concurrent modification")
+      if (initialModCount != modCount) throw new ConcurrentModificationException
       while((index <= mask) && (table(index) == null || table(index).value == None)) index+=1
     }
 
@@ -254,7 +254,7 @@ extends AbstractMap[Key, Value]
   override def foreach[U](f : ((Key, Value)) => U) {
     val startModCount = modCount
     foreachUndeletedEntry(entry => {
-      if (modCount != startModCount) sys.error("Concurrent Modification")
+      if (modCount != startModCount) throw new ConcurrentModificationException
       f((entry.key, entry.value.get))}
     )
   }

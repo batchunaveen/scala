@@ -322,6 +322,8 @@ trait Definitions extends api.StandardDefinitions {
     lazy val NullPointerExceptionClass      = getClassByName(sn.NPException)
     lazy val ThrowableClass                 = getClassByName(sn.Throwable)
     lazy val UninitializedErrorClass        = requiredClass[UninitializedFieldError]
+    lazy val RuntimeExceptionClass          = requiredClass[RuntimeException]
+    lazy val IllegalArgExceptionClass       = requiredClass[IllegalArgumentException]
 
     lazy val UninitializedFieldConstructor = UninitializedErrorClass.primaryConstructor
 
@@ -336,11 +338,9 @@ trait Definitions extends api.StandardDefinitions {
     lazy val DynamicClass               = requiredClass[Dynamic]
 
     // fundamental modules
-    lazy val SysPackage = getPackageObject("scala.sys")
-      def Sys_error    = getMemberMethod(SysPackage, nme.error)
 
     // Modules whose members are in the default namespace
-    // SI-5941: ScalaPackage and JavaLangPackage are never ever shared between mirrors
+    // scala/bug#5941: ScalaPackage and JavaLangPackage are never ever shared between mirrors
     // as a result, `Int` becomes `scala.Int` and `String` becomes `java.lang.String`
     // I could just change `isOmittablePrefix`, but there's more to it, so I'm leaving this as a todo for now
     lazy val UnqualifiedModules = List(PredefModule, ScalaPackage, JavaLangPackage)
@@ -527,7 +527,7 @@ trait Definitions extends api.StandardDefinitions {
 
     lazy val StringContextClass           = requiredClass[scala.StringContext]
 
-    // SI-8392 a reflection universe on classpath may not have
+    // scala/bug#8392 a reflection universe on classpath may not have
     // quasiquotes, if e.g. crosstyping with -Xsource on
     lazy val QuasiquoteClass             = if (ApiUniverseClass != NoSymbol) getMemberIfDefined(ApiUniverseClass, tpnme.Quasiquote) else NoSymbol
     lazy val QuasiquoteClass_api         = if (QuasiquoteClass != NoSymbol) getMember(QuasiquoteClass, tpnme.api) else NoSymbol
@@ -667,8 +667,8 @@ trait Definitions extends api.StandardDefinitions {
       isBundle && isBlackbox
     }
 
-    def isListType(tp: Type)     = tp <:< classExistentialType(ListClass)
-    def isIterableType(tp: Type) = tp <:< classExistentialType(IterableClass)
+    def isListType(tp: Type)     = tp.typeSymbol.isNonBottomSubClass(ListClass)
+    def isIterableType(tp: Type) = tp.typeSymbol.isNonBottomSubClass(IterableClass)
 
     // These "direct" calls perform no dealiasing. They are most needed when
     // printing types when one wants to preserve the true nature of the type.
@@ -902,7 +902,7 @@ trait Definitions extends api.StandardDefinitions {
       if (isTupleType(tp)) tupleComponents(tp)
       else getterMemberTypes(tp, productSelectors(tp))
 
-    // SI-8128 Still using the type argument of the base type at Seq/Option if this is an old-style (2.10 compatible)
+    // scala/bug#8128 Still using the type argument of the base type at Seq/Option if this is an old-style (2.10 compatible)
     //         extractor to limit exposure to regressions like the reported problem with existentials.
     //         TODO fix the existential problem in the general case, see test/pending/pos/t8128.scala
     private def typeArgOfBaseTypeOr(tp: Type, baseClass: Symbol)(or: => Type): Type = (tp baseType baseClass).typeArgs match {
@@ -970,29 +970,25 @@ trait Definitions extends api.StandardDefinitions {
       //  - sym: the symbol of the actual enumeration value (VAL1)
       //  - .owner: the ModuleClassSymbol of the enumeration (object E)
       //  - .linkedClassOfClass: the ClassSymbol of the enumeration (class E)
-      // SI-6613 Subsequent runs of the resident compiler demand the phase discipline here.
+      // scala/bug#6613 Subsequent runs of the resident compiler demand the phase discipline here.
       enteringPhaseNotLaterThan(picklerPhase)(sym.owner.linkedClassOfClass).tpe
     }
 
     /** Given a class symbol C with type parameters T1, T2, ... Tn
-     *  which have upper/lower bounds LB1/UB1, LB1/UB2, ..., LBn/UBn,
+     *  which have upper/lower bounds LB1/UB1, LB2/UB2, ..., LBn/UBn,
      *  returns an existential type of the form
      *
-     *    C[E1, ..., En] forSome { E1 >: LB1 <: UB1 ... en >: LBn <: UBn }.
+     *    C[E1, ..., En] forSome { E1 >: LB1 <: UB1 ... En >: LBn <: UBn }.
      */
-    // TODO Review the way this is used. I see two potential problems:
-    //  1. `existentialAbstraction` here doesn't create fresh existential type symbols, it just
-    //     uses the class type parameter symbols directly as the list of quantified symbols.
-    //     See SI-8244 for the trouble that this can cause.
-    //     Compare with callers of `typeParamsToExistentials` (used in Java raw type handling)
-    //  2. Why don't we require a prefix? Could its omission lead to wrong results in CheckabilityChecker?
-    def classExistentialType(clazz: Symbol): Type =
-      existentialAbstraction(clazz.typeParams, clazz.tpe_*)
+    def classExistentialType(prefix: Type, clazz: Symbol): Type = {
+      val eparams = typeParamsToExistentials(clazz, clazz.unsafeTypeParams)
+      newExistentialType(eparams, typeRef(prefix, clazz, eparams.map(_.tpeHK)))
+    }
 
     // members of class scala.Any
 
     // TODO these aren't final! They are now overridden in AnyRef/Object. Prior to the fix
-    //      for SI-8129, they were actually *overloaded* by the members in AnyRef/Object.
+    //      for scala/bug#8129, they were actually *overloaded* by the members in AnyRef/Object.
     //      We should unfinalize these, override in AnyValClass, and make the overrides final.
     //      Refchecks never actually looks at these, so it's just for consistency.
     lazy val Any_==       = enterNewMethod(AnyClass, nme.EQ, AnyTpe :: Nil, BooleanTpe, FINAL)
@@ -1421,6 +1417,8 @@ trait Definitions extends api.StandardDefinitions {
       case _                  => false
     }
 
+    lazy val ShowAsInfixAnnotationClass = rootMirror.getClassIfDefined("scala.annotation.showAsInfix")
+
     // todo: reconcile with javaSignature!!!
     def signature(tp: Type): String = {
       def erasure(tp: Type): Type = tp match {
@@ -1478,7 +1476,7 @@ trait Definitions extends api.StandardDefinitions {
 
       lazy val StringContext_f = getMemberMethod(StringContextClass, nme.f)
 
-      lazy val ArrowAssocClass = getMemberClass(PredefModule, TypeName("ArrowAssoc")) // SI-5731
+      lazy val ArrowAssocClass = getMemberClass(PredefModule, TypeName("ArrowAssoc")) // scala/bug#5731
       def isArrowAssoc(sym: Symbol) = sym.owner == ArrowAssocClass
 
       lazy val Boxes_isNumberOrBool  = getDecl(BoxesRunTimeClass, nme.isBoxedNumberOrBoolean)

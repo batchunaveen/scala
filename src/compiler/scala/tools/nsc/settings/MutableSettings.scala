@@ -261,8 +261,8 @@ class MutableSettings(val errorFn: String => Unit)
      */
     private var singleOutDir: Option[AbstractFile] = None
 
-    /** Add a destination directory for sources found under srcdir.
-     *  Both directories should exits.
+    /** Add a destination directory for sources found under `srcDir`.
+     *  Both directories should exist.
      */
     def add(srcDir: String, outDir: String): Unit = // used in ide?
       add(checkDir(AbstractFile.getDirectory(srcDir), srcDir),
@@ -416,9 +416,9 @@ class MutableSettings(val errorFn: String => Unit)
     // Helper to generate a textual explanation of valid inputs
     private def getValidText: String = (min, max) match {
       case (IntMin, IntMax)   => "can be any integer"
-      case (IntMin, x)        => "must be less than or equal to "+x
-      case (x, IntMax)        => "must be greater than or equal to "+x
-      case _                  => "must be between %d and %d".format(min, max)
+      case (IntMin, x)        => f"must be less than or equal to $x%d"
+      case (x, IntMax)        => f"must be greater than or equal to $x%d"
+      case _                  => f"must be between $min%d and $max%d"
     }
 
     // Ensure that the default value is actually valid
@@ -431,7 +431,7 @@ class MutableSettings(val errorFn: String => Unit)
       }
     }
 
-    def errorMsg() = errorFn("invalid setting for -"+name+" "+getValidText)
+    def errorMsg() = errorFn(s"invalid setting for $name $getValidText")
 
     def tryToSet(args: List[String]) =
       if (args.isEmpty) errorAndValue("missing argument", None)
@@ -444,7 +444,7 @@ class MutableSettings(val errorFn: String => Unit)
       if (value == default) Nil
       else List(name, value.toString)
 
-    withHelpSyntax(name + " <n>")
+    withHelpSyntax(s"$name <n>")
   }
 
   /** A setting represented by a boolean flag (false, unless set) */

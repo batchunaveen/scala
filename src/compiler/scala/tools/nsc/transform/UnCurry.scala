@@ -76,7 +76,7 @@ abstract class UnCurry extends InfoTransform
     private val noApply           = mutable.HashSet[Tree]()
     private val newMembers        = mutable.Map[Symbol, mutable.Buffer[Tree]]()
 
-    // Expand `Function`s in constructors to class instance creation (SI-6666, SI-8363)
+    // Expand `Function`s in constructors to class instance creation (scala/bug#6666, scala/bug#8363)
     // We use Java's LambdaMetaFactory (LMF), which requires an interface for the sam's owner
     private def mustExpandFunction(fun: Function) = {
       // (TODO: Can't use isInterface, yet, as it hasn't been updated for the new trait encoding)
@@ -231,7 +231,7 @@ abstract class UnCurry extends InfoTransform
           liftedMethod.updateAttachment(DelambdafyTarget)
         }
 
-        val typedNewFun = localTyper.typedPos(fun.pos)(Block(liftedMethod, super.transform(newFun)))
+        val typedNewFun = localTyper.typedPos(fun.pos)(Block(liftedMethod :: Nil, super.transform(newFun)))
         if (mustExpand) {
           val Block(stats, expr : Function) = typedNewFun
           treeCopy.Block(typedNewFun, stats, gen.expandFunction(localTyper)(expr, inConstructorFlag))
@@ -266,7 +266,7 @@ abstract class UnCurry extends InfoTransform
           assert(toArraySym != NoSymbol)
           def getClassTag(tp: Type): Tree = {
             val tag = localTyper.resolveClassTag(tree.pos, tp)
-            // Don't want bottom types getting any further than this (SI-4024)
+            // Don't want bottom types getting any further than this (scala/bug#4024)
             if (tp.typeSymbol.isBottomClass) getClassTag(AnyTpe)
             else if (!tag.isEmpty) tag
             else if (tp.bounds.hi ne tp) getClassTag(tp.bounds.hi)
@@ -342,12 +342,16 @@ abstract class UnCurry extends InfoTransform
      *  the whole tree with it.
      */
     private def replaceElidableTree(tree: Tree): Tree = {
+      def elisionOf(t: Type): Tree = t.typeSymbol match {
+        case StringClass => Literal(Constant("")) setType t
+        case _ => gen.mkZero(t)
+      }
       tree match {
         case DefDef(_,_,_,_,_,rhs) =>
-          val rhs1 = if (rhs == EmptyTree) rhs else Block(Nil, gen.mkZero(rhs.tpe)) setType rhs.tpe
+          val rhs1 = if (rhs == EmptyTree) rhs else Block(Nil, elisionOf(rhs.tpe)) setType rhs.tpe
           deriveDefDef(tree)(_ => rhs1) setSymbol tree.symbol setType tree.tpe
         case _ =>
-          gen.mkZero(tree.tpe) setType tree.tpe
+          elisionOf(tree.tpe)
       }
     }
 
@@ -363,7 +367,7 @@ abstract class UnCurry extends InfoTransform
      *  mark the method symbol SYNCHRONIZED for bytecode generation.
      *
      *  Delambdafy targets are deemed ineligible as the Delambdafy phase will
-     *  replace `this.synchronized` with `$this.synchronzed` now that it emits
+     *  replace `this.synchronized` with `$this.synchronized` now that it emits
      *  all lambda impl methods as static.
      */
     private def translateSynchronized(tree: Tree) = tree match {
@@ -410,21 +414,20 @@ abstract class UnCurry extends InfoTransform
       def isLiftedLambdaMethod(funSym: Symbol) =
         funSym.isArtifact && funSym.name.containsName(nme.ANON_FUN_NAME) && funSym.isLocalToBlock
 
-      def checkIsElisible(sym: Symbol): Boolean =
-        (sym ne null) && sym.elisionLevel.exists { level =>
+      def checkIsElidable(sym: Symbol): Boolean = (sym ne null) && sym.elisionLevel.exists { level =>
           if (sym.isMethod) level < settings.elidebelow.value
           else {
-            if (settings.isScala213) reporter.error(sym.pos, s"${sym.name}: Only methods can be marked @elidable!")
+            if (settings.isScala213) reporter.error(sym.pos, s"${sym.name}: Only methods can be marked @elidable.")
             false
           }
         }
 
       val result =
-        if (checkIsElisible(sym))
+        if (checkIsElidable(sym))
           replaceElidableTree(tree)
         else translateSynchronized(tree) match {
           case dd @ DefDef(mods, name, tparams, _, tpt, rhs) =>
-            // Remove default argument trees from parameter ValDefs, SI-4812
+            // Remove default argument trees from parameter ValDefs, scala/bug#4812
             val vparamssNoRhs = dd.vparamss mapConserve (_ mapConserve {p =>
               treeCopy.ValDef(p, p.mods, p.name, p.tpt, EmptyTree)
             })
@@ -460,7 +463,7 @@ abstract class UnCurry extends InfoTransform
               super.transform(tree)
 
           case Apply(fn, args) =>
-            val needLift = needTryLift || !fn.symbol.isLabel // SI-6749, no need to lift in args to label jumps.
+            val needLift = needTryLift || !fn.symbol.isLabel // scala/bug#6749, no need to lift in args to label jumps.
             withNeedLift(needLift) {
               val formals = fn.tpe.paramTypes
               treeCopy.Apply(tree, transform(fn), transformTrees(transformArgs(tree.pos, fn.symbol, args, formals)))
@@ -636,7 +639,7 @@ abstract class UnCurry extends InfoTransform
      * This violates the principle that each compiler phase should produce trees that
      * can be retyped (see [[scala.tools.nsc.typechecker.TreeCheckers]]), and causes
      * a practical problem in `erasure`: it is not able to correctly determine if
-     * such a signature overrides a corresponding signature in a parent. (SI-6443).
+     * such a signature overrides a corresponding signature in a parent. (scala/bug#6443).
      *
      * This transformation erases the dependent method types by:
      *   - Widening the formal parameter type to existentially abstract
@@ -687,7 +690,7 @@ abstract class UnCurry extends InfoTransform
               // declared type and assign this to a synthetic val. Later, we'll patch
               // the method body to refer to this, rather than the parameter.
               val tempVal: ValDef = {
-                // SI-9442: using the "uncurry-erased" type (the one after the uncurry phase) can lead to incorrect
+                // scala/bug#9442: using the "uncurry-erased" type (the one after the uncurry phase) can lead to incorrect
                 // tree transformations. For example, compiling:
                 // ```
                 //   def foo(c: Ctx)(l: c.Tree): Unit = {
@@ -705,7 +708,7 @@ abstract class UnCurry extends InfoTransform
                 //
                 // So what we need to do is to use the pre-uncurry type when creating `l$1`, which is `c.Tree` and is
                 // correct. Now, there are two additional problems:
-                // 1. when varargs and byname params are involved, the uncurry transformation desugares these special
+                // 1. when varargs and byname params are involved, the uncurry transformation desugars these special
                 //    cases to actual typerefs, eg:
                 //    ```
                 //           T*  ~> Seq[T] (Scala-defined varargs)

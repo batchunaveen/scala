@@ -163,7 +163,7 @@ class Flags extends ModifierFlags {
 
   final val LOCKED        = 1L << 39      // temporary flag to catch cyclic dependencies
   final val SPECIALIZED   = 1L << 40      // symbol is a generated specialized member
-  final val VBRIDGE       = 1L << 42      // symbol is a varargs bridge
+  final val VBRIDGE       = 1L << 42      // symbol is a varargs bridge (but not a bridge at the bytecode level)
 
   final val VARARGS       = 1L << 43      // symbol is a Java-style varargs method
   final val TRIEDCOOKING  = 1L << 44      // `Cooking` has been tried on this symbol
@@ -311,8 +311,8 @@ class Flags extends ModifierFlags {
   /** These flags are pickled */
   final val PickledFlags  = (
       (InitialFlags & ~FlagsNotPickled)
-    | notPRIVATE // for value class constructors (SI-6601), and private members referenced
-                 // in @inline-marked methods publicized in SuperAccessors (see SI-6608, e6b4204604)
+    | notPRIVATE // for value class constructors (scala/bug#6601), and private members referenced
+                 // in @inline-marked methods publicized in SuperAccessors (see scala/bug#6608, e6b4204604)
   )
 
   /** If we have a top-level class or module

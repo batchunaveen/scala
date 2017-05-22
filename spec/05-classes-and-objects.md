@@ -597,10 +597,12 @@ overridden in subclasses. A `final` class may not be inherited by
 a template. `final` is redundant for object definitions.  Members
 of final classes or objects are implicitly also final, so the
 `final` modifier is generally redundant for them, too. Note, however, that
-[constant value definitions](04-basic-declarations-and-definitions.html#value-declarations-and-definitions) do require
-an explicit `final` modifier, even if they are defined in a final class or
-object. `final` may not be applied to incomplete members, and it may not be
-combined in one modifier list with `sealed`.
+[constant value definitions](04-basic-declarations-and-definitions.html#value-declarations-and-definitions)
+do require an explicit `final` modifier,
+even if they are defined in a final class or object.
+`final` is permitted for abstract classes
+but it may not be applied to traits or incomplete members,
+and it may not be combined in one modifier list with `sealed`.
 
 ### `sealed`
 The `sealed` modifier applies to class definitions. A
@@ -709,7 +711,7 @@ Here,
     value parameter may not form part of the types of any of the parent classes or members of the class template $t$.
     It is illegal to define two formal value parameters with the same name.
 
-    If no formal parameter sections are given, an empty parameter section `()` is assumed.
+    If a class has no formal parameter section that is not implicit, an empty parameter section `()` is assumed.
 
     If a formal parameter declaration $x: T$ is preceded by a `val`
     or `var` keyword, an accessor (getter) [definition](04-basic-declarations-and-definitions.html#variable-declarations-and-definitions)
@@ -842,18 +844,18 @@ TmplDef  ::=  ‘case’ ‘class’ ClassDef
 If a class definition is prefixed with `case`, the class is said
 to be a _case class_.
 
-The formal parameters in the first parameter section of a case class
-are called _elements_; they are treated
-specially. First, the value of such a parameter can be extracted as a
+A case class is required to have a parameter section that is not implicit.
+The formal parameters in the first parameter section 
+are called _elements_ and are treated specially.
+First, the value of such a parameter can be extracted as a
 field of a constructor pattern. Second, a `val` prefix is
-implicitly added to such a parameter, unless the parameter carries
-already a `val` or `var` modifier. Hence, an accessor
+implicitly added to such a parameter, unless the parameter already carries
+a `val` or `var` modifier. Hence, an accessor
 definition for the parameter is [generated](#class-definitions).
 
 A case class definition of `$c$[$\mathit{tps}\,$]($\mathit{ps}_1\,$)$\ldots$($\mathit{ps}_n$)` with type
-parameters $\mathit{tps}$ and value parameters $\mathit{ps}$ implicitly
-generates an [extractor object](08-pattern-matching.html#extractor-patterns) which is
-defined as follows:
+parameters $\mathit{tps}$ and value parameters $\mathit{ps}$ implies
+the definition of a companion object, which serves as an [extractor object](08-pattern-matching.html#extractor-patterns). It has the following shape:
 
 ```scala
 object $c$ {
@@ -870,11 +872,13 @@ each $\mathit{xs}\_i$ denotes the parameter names of the parameter
 section $\mathit{ps}\_i$, and
 $\mathit{xs}\_{11}, \ldots , \mathit{xs}\_{1k}$ denote the names of all parameters
 in the first parameter section $\mathit{xs}\_1$.
-If a type parameter section is missing in the
-class, it is also missing in the `apply` and
-`unapply` methods.
-The definition of `apply` is omitted if class $c$ is
-`abstract`.
+If a type parameter section is missing in the class, it is also missing in the `apply` and `unapply` methods.
+
+If the companion object $c$ is already defined,
+the  `apply` and `unapply` methods are added to the existing object.
+If the object $c$ already has a [matching](#definition-matching)
+`apply` (or `unapply`) member, no new definition is added.
+The definition of `apply` is omitted if class $c$ is `abstract`.
 
 If the case class definition contains an empty value parameter list, the
 `unapply` method returns a `Boolean` instead of an `Option` type and
@@ -887,9 +891,6 @@ def unapply[$\mathit{tps}\,$]($x$: $c$[$\mathit{tps}\,$]) = x ne null
 The name of the `unapply` method is changed to `unapplySeq` if the first
 parameter section $\mathit{ps}_1$ of $c$ ends in a
 [repeated parameter](04-basic-declarations-and-definitions.html#repeated-parameters).
-If a companion object $c$ exists already, no new object is created,
-but the `apply` and `unapply` methods are added to the existing
-object instead.
 
 A method named `copy` is implicitly added to every case class unless the
 class already has a member (directly defined or inherited) with that name, or the

@@ -11,6 +11,7 @@ import scala.collection.mutable.ListBuffer
 import scala.util.control.Exception.ultimately
 import symtab.Flags._
 import PartialFunction._
+import scala.annotation.tailrec
 
 /** An interface to enable higher configurability of diagnostic messages
  *  regarding type errors.  This is barely a beginning as error messages are
@@ -32,7 +33,7 @@ import PartialFunction._
  *  @version 1.0
  */
 trait TypeDiagnostics {
-  self: Analyzer =>
+  self: Analyzer with StdAttachments =>
 
   import global._
   import definitions._
@@ -78,6 +79,8 @@ trait TypeDiagnostics {
     prefix + name.decode
   }
 
+  private def atBounded(t: Tree) = t.hasAttachment[AtBoundIdentifierAttachment.type]
+
   /** Does the positioned line assigned to t1 precede that of t2?
    */
   def posPrecedes(p1: Position, p2: Position) = p1.isDefined && p2.isDefined && p1.line < p2.line
@@ -116,13 +119,13 @@ trait TypeDiagnostics {
    */
   final def exampleTuplePattern(names: List[Name]): String = {
     val arity = names.length
-    val varPatterNames: Option[List[String]] = sequence(names map {
+    val varPatternNames: Option[List[String]] = sequence(names map {
       case name if nme.isVariableName(name) => Some(name.decode)
       case _                                => None
     })
     def parenthesize(a: String) = s"($a)"
     def genericParams = (Seq("param1") ++ (if (arity > 2) Seq("...") else Nil) ++ Seq(s"param$arity"))
-    parenthesize(varPatterNames.getOrElse(genericParams).mkString(", "))
+    parenthesize(varPatternNames.getOrElse(genericParams).mkString(", "))
   }
 
   def alternatives(tree: Tree): List[Type] = tree.tpe match {
@@ -274,19 +277,54 @@ trait TypeDiagnostics {
     if (AnyRefTpe <:< req) notAnyRefMessage(found) else ""
   }
 
+  def finalOwners(tpe: Type): Boolean = (tpe.prefix == NoPrefix) || recursivelyFinal(tpe)
+
+  @tailrec
+  final def recursivelyFinal(tpe: Type): Boolean = {
+    val prefix = tpe.prefix
+    if (prefix != NoPrefix) {
+      if (prefix.typeSymbol.isFinal) {
+        recursivelyFinal(prefix)
+      } else {
+        false
+      }
+    } else {
+      true
+    }
+  }
+
   // TODO - figure out how to avoid doing any work at all
   // when the message will never be seen.  I though context.reportErrors
   // being false would do that, but if I return "<suppressed>" under
   // that condition, I see it.
   def foundReqMsg(found: Type, req: Type): String = {
-    def baseMessage = (
-      ";\n found   : " + found.toLongString + existentialContext(found) + explainAlias(found) +
-       "\n required: " + req + existentialContext(req) + explainAlias(req)
-    )
-    (   withDisambiguation(Nil, found, req)(baseMessage)
-      + explainVariance(found, req)
-      + explainAnyVsAnyRef(found, req)
-    )
+    val foundWiden = found.widen
+    val reqWiden = req.widen
+    val sameNamesDifferentPrefixes =
+      foundWiden.typeSymbol.name == reqWiden.typeSymbol.name &&
+        foundWiden.prefix.typeSymbol != reqWiden.prefix.typeSymbol
+    val easilyMistakable =
+      sameNamesDifferentPrefixes &&
+      !req.typeSymbol.isConstant &&
+      finalOwners(foundWiden) && finalOwners(reqWiden) &&
+      !found.typeSymbol.isTypeParameterOrSkolem && !req.typeSymbol.isTypeParameterOrSkolem
+
+    if (easilyMistakable) {
+      val longestNameLength = foundWiden.nameAndArgsString.length max reqWiden.nameAndArgsString.length
+      val paddedFoundName = foundWiden.nameAndArgsString.padTo(longestNameLength, ' ')
+      val paddedReqName = reqWiden.nameAndArgsString.padTo(longestNameLength, ' ')
+      ";\n found   : " + (paddedFoundName + s" (in ${found.prefix.typeSymbol.fullNameString}) ") + explainAlias(found) +
+       "\n required: " + (paddedReqName + s" (in ${req.prefix.typeSymbol.fullNameString}) ") + explainAlias(req)
+    } else {
+      def baseMessage = {
+        ";\n found   : " + found.toLongString + existentialContext(found) + explainAlias(found) +
+         "\n required: " + req + existentialContext(req) + explainAlias(req)
+      }
+      (withDisambiguation(Nil, found, req)(baseMessage)
+        + explainVariance(found, req)
+        + explainAnyVsAnyRef(found, req)
+        )
+    }
   }
 
   def typePatternAdvice(sym: Symbol, ptSym: Symbol) = {
@@ -315,17 +353,12 @@ trait TypeDiagnostics {
     def restoreName()     = sym.name = savedName
     def modifyName(f: String => String) = sym setName newTypeName(f(sym.name.toString))
 
-    /** Prepend java.lang, scala., or Predef. if this type originated
-     *  in one of those.
-     */
-    def qualifyDefaultNamespaces() = {
-      val intersect = Set(trueOwner, aliasOwner) intersect UnqualifiedOwners
-      if (intersect.nonEmpty && tp.typeSymbolDirect.name == tp.typeSymbol.name) preQualify()
-    }
-
     // functions to manipulate the name
     def preQualify()   = modifyName(trueOwner.fullName + "." + _)
-    def postQualify()  = if (!(postQualifiedWith contains trueOwner)) { postQualifiedWith ::= trueOwner; modifyName(_ + "(in " + trueOwner + ")") }
+    def postQualify()  = if (!(postQualifiedWith contains trueOwner)) {
+      postQualifiedWith ::= trueOwner
+      modifyName(s => s"$s(in $trueOwner)")
+    }
     def typeQualify()  = if (sym.isTypeParameterOrSkolem) postQualify()
     def nameQualify()  = if (trueOwner.isPackageClass) preQualify() else postQualify()
 
@@ -357,7 +390,7 @@ trait TypeDiagnostics {
   /** This is tricky stuff - we need to traverse types deeply to
    *  explain name ambiguities, which may occur anywhere.  However
    *  when lub explosions come through it knocks us into an n^2
-   *  disaster, see SI-5580.  This is trying to perform the initial
+   *  disaster, see scala/bug#5580.  This is trying to perform the initial
    *  filtering of possibly ambiguous types in a sufficiently
    *  aggressive way that the state space won't explode.
    */
@@ -414,12 +447,6 @@ trait TypeDiagnostics {
         if (td1 string_== td2)
           tds foreach (_.nameQualify())
 
-        // If they have the same simple name, and either of them is in the
-        // scala package or predef, qualify with scala so it is not confusing why
-        // e.g. java.util.Iterator and Iterator are different types.
-        if (td1 name_== td2)
-          tds foreach (_.qualifyDefaultNamespaces())
-
         // If they still print identically:
         //   a) If they are type parameters with different owners, append (in <owner>)
         //   b) Failing that, the best we can do is append "(some other)" to the latter.
@@ -442,13 +469,18 @@ trait TypeDiagnostics {
       context.warning(pos, "imported `%s' is permanently hidden by definition of %s".format(hidden, defn.fullLocationString))
 
     object checkUnused {
-      val ignoreNames: Set[TermName] = Set(TermName("readResolve"), TermName("readObject"), TermName("writeObject"), TermName("writeReplace"))
+      val ignoreNames: Set[TermName] = Set(
+        "readResolve", "readObject", "writeObject", "writeReplace"
+      ).map(TermName(_))
 
       class UnusedPrivates extends Traverser {
         val defnTrees = ListBuffer[MemberDef]()
         val targets   = mutable.Set[Symbol]()
         val setVars   = mutable.Set[Symbol]()
         val treeTypes = mutable.Set[Type]()
+        val atBounds  = mutable.Set[Symbol]()
+        val params    = mutable.Set[Symbol]()
+        val patvars   = mutable.Set[Symbol]()
 
         def defnSymbols = defnTrees.toList map (_.symbol)
         def localVars   = defnSymbols filter (t => t.isLocalToBlock && t.isVar)
@@ -468,20 +500,39 @@ trait TypeDiagnostics {
         )
 
         override def traverse(t: Tree): Unit = {
+          val sym = t.symbol
           t match {
-            case t: MemberDef if qualifies(t.symbol)   => defnTrees += t
-            case t: RefTree if t.symbol ne null        => targets += t.symbol
+            case m: MemberDef if qualifies(t.symbol)   =>
+              defnTrees += m
+              t match {
+                case DefDef(mods@_, name@_, tparams@_, vparamss, tpt@_, rhs@_) if !sym.isAbstract && !sym.isDeprecated && !sym.isMacro =>
+                  if (sym.isPrimaryConstructor)
+                    for (cpa <- sym.owner.constrParamAccessors if cpa.isPrivateLocal) params += cpa
+                  else if (sym.isSynthetic && sym.isImplicit) return
+                  else if (!sym.isConstructor)
+                    for (vs <- vparamss) params ++= vs.map(_.symbol)
+                case _ =>
+              }
+            case CaseDef(pat, guard@_, rhs@_) if settings.warnUnusedPatVars
+                                                       => pat.foreach {
+                                                            // TODO don't warn in isDefinedAt of $anonfun
+                                                            case b @ Bind(n, _) if !atBounded(b) && n != nme.DEFAULT_CASE => patvars += b.symbol
+                                                            case _ =>
+                                                          }
+            case _: RefTree if sym ne null             => targets += sym
             case Assign(lhs, _) if lhs.symbol != null  => setVars += lhs.symbol
+            case Bind(_, _) if atBounded(t)            => atBounds += sym
             case _                                     =>
           }
           // Only record type references which don't originate within the
           // definition of the class being referenced.
           if (t.tpe ne null) {
-            for (tp <- t.tpe ; if !treeTypes(tp) && !currentOwner.ownerChain.contains(tp.typeSymbol)) {
+            for (tp <- t.tpe if !treeTypes(tp) && !currentOwner.ownerChain.contains(tp.typeSymbol)) {
               tp match {
                 case NoType | NoPrefix    =>
                 case NullaryMethodType(_) =>
                 case MethodType(_, _)     =>
+                case SingleType(_, _)     =>
                 case _                    =>
                   log(s"$tp referenced from $currentOwner")
                   treeTypes += tp
@@ -501,55 +552,127 @@ trait TypeDiagnostics {
           && (m.isPrivate || m.isLocalToBlock)
           && !(treeTypes.exists(tp => tp exists (t => t.typeSymbolDirect == m)))
         )
+        def isSyntheticWarnable(sym: Symbol) = (
+          sym.isDefaultGetter 
+        )
+        
         def isUnusedTerm(m: Symbol): Boolean = (
-             (m.isTerm)
-          && (m.isPrivate || m.isLocalToBlock)
+             m.isTerm
+          && (!m.isSynthetic || isSyntheticWarnable(m))
+          && ((m.isPrivate && !(m.isConstructor && m.owner.isAbstract)) || m.isLocalToBlock)
           && !targets(m)
           && !(m.name == nme.WILDCARD)              // e.g. val _ = foo
-          && !ignoreNames(m.name.toTermName)        // serialization methods
+          && (m.isValueParameter || !ignoreNames(m.name.toTermName)) // serialization methods
           && !isConstantType(m.info.resultType)     // subject to constant inlining
           && !treeTypes.exists(_ contains m)        // e.g. val a = new Foo ; new a.Bar
+          //&& !(m.isVal && m.info.resultType =:= typeOf[Unit])      // Unit val is uninteresting
         )
-        def unusedTypes = defnTrees.toList filter (t => isUnusedType(t.symbol))
-        def unusedTerms = defnTrees.toList filter (v => isUnusedTerm(v.symbol))
+        def isUnusedParam(m: Symbol): Boolean = (
+             isUnusedTerm(m)
+          && !m.isDeprecated
+          && !m.owner.isDefaultGetter
+          && !(m.isParamAccessor && (
+            m.owner.isImplicit ||
+            targets.exists(s => s.isParameter
+              && s.name == m.name && s.owner.isConstructor && s.owner.owner == m.owner) // exclude ctor params
+          ))
+        )
+        def sympos(s: Symbol): Int =
+          if (s.pos.isDefined) s.pos.point else if (s.isTerm) s.asTerm.referenced.pos.point else -1
+        def treepos(t: Tree): Int =
+          if (t.pos.isDefined) t.pos.point else sympos(t.symbol)
+
+        def unusedTypes = defnTrees.toList.filter(t => isUnusedType(t.symbol)).sortBy(treepos)
+        def unusedTerms = {
+          val all = defnTrees.toList.filter(v => isUnusedTerm(v.symbol))
+
+          // filter out setters if already warning for getter, indicated by position.
+          // also documentary names in patterns.
+          all.filterNot(v =>
+              v.symbol.isSetter && all.exists(g => g.symbol.isGetter && g.symbol.pos.point == v.symbol.pos.point)
+           || atBounds.exists(x => v.symbol.pos.point == x.pos.point)
+          ).sortBy(treepos)
+        }
         // local vars which are never set, except those already returned in unused
-        def unsetVars = localVars filter (v => !setVars(v) && !isUnusedTerm(v))
+        def unsetVars = localVars.filter(v => !setVars(v) && !isUnusedTerm(v)).sortBy(sympos)
+        def unusedParams = params.toList.filter(isUnusedParam).sortBy(sympos)
+        def inDefinedAt(p: Symbol) = p.owner.isMethod && p.owner.name == nme.isDefinedAt && p.owner.owner.isAnonymousFunction
+        def unusedPatVars = patvars.toList.filter(p => isUnusedTerm(p) && !inDefinedAt(p)).sortBy(sympos)
       }
 
-      def apply(unit: CompilationUnit) = {
+      private def warningsEnabled: Boolean = {
+        val ss = settings
+        import ss._
+        warnUnusedPatVars || warnUnusedPrivates || warnUnusedLocals || warnUnusedParams || warnUnusedImplicits
+      }
+
+      def apply(unit: CompilationUnit): Unit = if (warningsEnabled) {
         val p = new UnusedPrivates
-        p traverse unit.body
-        val unused = p.unusedTerms
-        unused foreach { defn: DefTree =>
-          val sym             = defn.symbol
-          val pos = (
-            if (defn.pos.isDefined) defn.pos
-            else if (sym.pos.isDefined) sym.pos
-            else sym match {
-              case sym: TermSymbol => sym.referenced.pos
-              case _               => NoPosition
+        p.traverse(unit.body)
+        if (settings.warnUnusedLocals || settings.warnUnusedPrivates) {
+          for (defn: DefTree <- p.unusedTerms) {
+            val sym = defn.symbol
+            val pos = (
+              if (defn.pos.isDefined) defn.pos
+              else if (sym.pos.isDefined) sym.pos
+              else sym match {
+                case sym: TermSymbol => sym.referenced.pos
+                case _               => NoPosition
+              }
+            )
+            val why = if (sym.isPrivate) "private" else "local"
+            val what = (
+              if (sym.isDefaultGetter) "default argument"
+              else if (sym.isConstructor) "constructor"
+              else if (
+                  sym.isVar
+               || sym.isGetter && (sym.accessed.isVar || (sym.owner.isTrait && !sym.hasFlag(STABLE)))
+              ) s"var ${sym.name.getterName.decoded}"
+              else if (
+                  sym.isVal
+               || sym.isGetter && (sym.accessed.isVal || (sym.owner.isTrait && sym.hasFlag(STABLE)))
+               || sym.isLazy
+              ) s"val ${sym.name.decoded}"
+              else if (sym.isSetter) s"setter of ${sym.name.getterName.decoded}"
+              else if (sym.isMethod) s"method ${sym.name.decoded}"
+              else if (sym.isModule) s"object ${sym.name.decoded}"
+              else "term"
+            )
+            reporter.warning(pos, s"$why $what in ${sym.owner} is never used")
+          }
+          for (v <- p.unsetVars) {
+            reporter.warning(v.pos, s"local var ${v.name} in ${v.owner} is never set: consider using immutable val")
+          }
+          for (t <- p.unusedTypes) {
+            val sym = t.symbol
+            val wrn = if (sym.isPrivate) settings.warnUnusedPrivates else settings.warnUnusedLocals
+            if (wrn) {
+              val why = if (sym.isPrivate) "private" else "local"
+              reporter.warning(t.pos, s"$why ${sym.fullLocationString} is never used")
             }
-          )
-          val why = if (sym.isPrivate) "private" else "local"
-          val what = (
-            if (sym.isDefaultGetter) "default argument"
-            else if (sym.isConstructor) "constructor"
-            else if (sym.isVar || sym.isGetter && (sym.accessed.isVar || (sym.owner.isTrait && !sym.hasFlag(STABLE)))) "var"
-            else if (sym.isVal || sym.isGetter && (sym.accessed.isVal || (sym.owner.isTrait && sym.hasFlag(STABLE))) || sym.isLazy) "val"
-            else if (sym.isSetter) "setter"
-            else if (sym.isMethod) "method"
-            else if (sym.isModule) "object"
-            else "term"
-          )
-          reporter.warning(pos, s"$why $what in ${sym.owner} is never used")
+          }
         }
-        p.unsetVars foreach { v =>
-          reporter.warning(v.pos, s"local var ${v.name} in ${v.owner} is never set - it could be a val")
+        if (settings.warnUnusedPatVars) {
+          for (v <- p.unusedPatVars)
+            reporter.warning(v.pos, s"pattern var ${v.name} in ${v.owner} is never used; `${v.name}@_' suppresses this warning")
         }
-        p.unusedTypes foreach { t =>
-          val sym = t.symbol
-          val why = if (sym.isPrivate) "private" else "local"
-          reporter.warning(t.pos, s"$why ${sym.fullLocationString} is never used")
+        if (settings.warnUnusedParams || settings.warnUnusedImplicits) {
+          def classOf(s: Symbol): Symbol = if (s.isClass || s == NoSymbol) s else classOf(s.owner)
+          def isImplementation(m: Symbol): Boolean = {
+            val opc = new overridingPairs.Cursor(classOf(m))
+            opc.iterator.exists(pair => pair.low == m)
+          }
+          def isConvention(p: Symbol): Boolean = {
+            (p.name.decoded == "args" && p.owner.isMethod && p.owner.name.decoded == "main") ||
+            (p.tpe =:= typeOf[scala.Predef.DummyImplicit])
+          }
+          def warnable(s: Symbol) = (
+               (settings.warnUnusedParams || s.isImplicit)
+            && !isImplementation(s.owner)
+            && !isConvention(s)
+          )
+          for (s <- p.unusedParams if warnable(s))
+            reporter.warning(s.pos, s"parameter $s in ${s.owner} is never used")
         }
       }
     }
