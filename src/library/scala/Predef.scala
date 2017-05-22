@@ -465,12 +465,18 @@ object Predef extends LowPriorityImplicits {
    */
   @implicitNotFound(msg = "Cannot prove that ${From} <:< ${To}.")
   sealed abstract class <:<[-From, +To] extends (From => To) with Serializable {
+    /** substitute the To in the type F[To] to From
+     */
     def substitute[F[-_]](ft: F[To]): F[From]
-    def covariant[F[+_]]: <:<[F[From], F[To]] = {
+    /** create a new evidence for a covariant type F[_]
+     */
+    def liftCo[F[+_]]: <:<[F[From], F[To]] = {
       type G[-T] = F[T] <:< F[To]
       substitute[G](implicitly[F[To] <:< F[To]])
     }
-    def contravariant[F[-_]]: <:<[F[To], F[From]] = {
+    /** create a new evidence for a contravariant type F[_]
+     */
+    def liftContra[F[-_]]: <:<[F[To], F[From]] = {
       type G[-T] = F[To] <:< F[T]
       substitute[G](implicitly[F[To] <:< F[To]])
     }
@@ -492,11 +498,17 @@ object Predef extends LowPriorityImplicits {
    */
   @implicitNotFound(msg = "Cannot prove that ${From} =:= ${To}.")
   sealed abstract class =:=[From, To] extends (From => To) with Serializable {
+    /** substitute the From in the type F[From] to To
+     */
     def substitute[F[_]](ff: F[From]): F[To]
-    def lift[F[_]]: =:=[F[From], F[To]] = {
+    /** create an instance for a type constructor F[_]
+     */
+    def liftTo[F[_]]: =:=[F[From], F[To]] = {
       type G[T] = F[From] =:= F[T]
       substitute[G](implicitly[F[From] =:= F[From]])
     }
+    /** flip the order of the type paraemeters
+     */
     def flip: =:=[To, From] = {
       type G[T] = T =:= From
       substitute[G](implicitly[From =:= From])
